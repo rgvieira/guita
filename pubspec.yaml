@@ -22,7 +22,6 @@ dependencies:
   fl_chart: ^0.70.2
   permission_handler: ^11.3.1
   flutter_midi_pro: ^3.1.6
-  webview_flutter: ^4.10.0
 
 dev_dependencies:
   flutter_test:
@@ -40,5 +39,3 @@ flutter:
   assets:
     - assets/soundfonts/TimGM6mb.sf2
     - assets/soundfonts/sonivox.sf2
-    - assets/alphaTab.min.js
-    - assets/Bravura.otf

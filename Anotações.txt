@@ -1,6 +1,11 @@
 D:\workspace\opencode\Fretly-main
 
 Key commands:
+# pra novo splash screen nativo
+flutter pub get
+dart run flutter_native_splash:create
+
+
 1. flutter pub get - fetch dependencies
 2. flutter run -d windows - run on Windows
 3. flutter run -d chrome - run on web (file picker works differently)
