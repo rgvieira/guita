@@ -1,0 +1,42 @@
+D:\workspace\opencode\Fretly-main
+
+Key commands:
+1. flutter pub get - fetch dependencies
+2. flutter run -d windows - run on Windows
+3. flutter run -d chrome - run on web (file picker works differently)
+4. flutter analyze - check for errors
+5. Hot reload: r
+6. Hot restart: R
+7. Quit: q
+I should also mention that for Android testing, they'd need flutter run -d <device> after connecting a device or emulator.
+cd D:\workspace\opencode\guitar_tuxguitar
+# 1. Instalar dependencias
+flutter pub get
+# 2. Rodar no Windows (desktop)
+flutter run -d windows
+# 3. Rodar no Chrome (web)
+flutter run -d chrome
+# 4. Rodar em emulador/dispositivo Android
+
+flutter devices           # lista dispositivos
+
+
+flutter clean
+flutter pub get
+flutter run -d 001200629033611   # roda no dispositivo
+
+Durante flutter run:
+Tecla	Acao
+r	Hot reload (rapido)
+R	Hot restart (recompila)
+q	Sair
+h	Lista todos comandos
+Fluxo de teste no Windows:
+1. App abre na tela Demos
+2. Toque em Rock Demo ou Blues in E
+3. Veja a partitura com notas, pausas, acidentes, efeitos
+4. Clique ▶ Play para ver o cursor animado
+5. Use ⚙️ (settings) → troque para Modo API → Selecionar Pasta
+6. Escolha uma pasta com arquivos .gp3/.gp5/.xml/.midi → aparece treeview com busca
+
+o código atual não está conseguindo extrair som dos arquivos gp*. preciso saber o que está errado e ter correção imediata. em D:\workspace\opencode\Fretly-main está um app flutter que usa tuxguitar e funciona. este aqui falta som; visualização de partitura, tablatura e parttura de todo o arquivo.

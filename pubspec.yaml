@@ -1,0 +1,43 @@
+name: guitarra
+description: "Guitarra - Leitor de partituras, tablaturas e cifras com suporte a GP*, MIDI e MusicXML"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.6.1
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.5
+  file_picker: ^8.1.7
+  intl: ^0.20.2
+  xml: ^6.5.0
+  uuid: ^4.5.1
+  collection: ^1.19.1
+  fl_chart: ^0.70.2
+  permission_handler: ^11.3.1
+  flutter_midi_pro: ^3.1.6
+  webview_flutter: ^4.10.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter_launcher_icons: # ✅ Configuração de ícone
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon/icon.png"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/soundfonts/TimGM6mb.sf2
+    - assets/alphaTab.min.js
+    - assets/Bravura.otf

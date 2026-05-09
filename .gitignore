@@ -1,0 +1,70 @@
+# Flutter
+.dart_tool/
+.pub-cache/
+.pub/
+build/
+coverage/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.flutter-plugins-dependencies
+*.flutter-plugins
+*.flutter-plugins-dependencies
+
+# Android
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+local.properties
+*.keystore
+*.jks
+key.properties
+
+# iOS
+/ios/Pods/
+/ios/.symlinks/
+/ios/Flutter/Flutter.framework
+/ios/Flutter/Flutter.podspec
+/ios/Flutter/Generated.xcconfig
+/ios/Flutter/app.flx
+/ios/Flutter/app.zip
+/ios/Flutter/flutter_assets/
+/ios/Flutter/flutter_export_environment.sh
+/ios/ServiceDefinitions.json
+/ios/Runner/GeneratedPluginRegistrant.*
+
+# Windows
+/windows/flutter/
+/windows/runner/GeneratedPluginRegistrant.*
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+
+# Build
+*.class
+*.log
+*.pyc
+/buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# Symbolication
+app.*.symbols
+app.*.map.json
+
+# Environment
+.env
+.env.local

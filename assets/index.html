@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Guitarra</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #fff; }
+    #alphaTab { width: 100%; height: 100%; overflow-x: auto; overflow-y: auto; }
+    .at-cursors .at-cursor-bar { fill: rgba(255, 0, 0, 0.3); }
+    .at-cursors .at-cursor-beat { fill: rgba(255, 165, 0, 0.4); }
+  </style>
+  <script src="alphaTab.min.js"></script>
+</head>
+<body>
+<div id="alphaTab"></div>
+<script>
+  const api = new alphaTab.AlphaTabApi(document.querySelector('#alphaTab'), {
+    core: {
+      file: null,
+      engine: 'svg',
+      enableLazyLoading: false,
+    },
+    display: {
+      staffLineWidth: 0.8,
+      scale: 1.0,
+      staveProfile: 'score+tablature',
+      layout: {
+        strategy: 'horizontal',
+        additionalSettings: {
+          startBar: 1,
+          barsPerRow: 8,
+        },
+      },
+    },
+    player: {
+      enablePlayer: true,
+      enableCursor: true,
+      enableUserInteraction: true,
+      soundFont: null,
+      scrollElement: document.querySelector('#alphaTab'),
+    },
+    notation: {
+      notationElement: null,
+      elements: {
+        // ...
+      },
+    },
+  });
+
+  let isReady = false;
+
+  api.scoreLoaded.on((score) => {
+    isReady = true;
+    if (window.FlutterChannel) {
+      window.FlutterChannel.postMessage(JSON.stringify({
+        type: 'scoreLoaded',
+        title: score.title || '',
+        tracks: score.tracks?.length || 0,
+        measures: score.masterBars?.length || 0,
+      }));
+    }
+  });
+
+  api.playerPositionChanged.on((position) => {
+    if (window.FlutterChannel) {
+      window.FlutterChannel.postMessage(JSON.stringify({
+        type: 'positionChanged',
+        currentMeasure: position.currentMeasureIndex,
+        currentBeat: position.currentBeatIndex,
+        milliseconds: position.time,
+      }));
+    }
+  });
+
+  api.playerStateChanged.on((state) => {
+    if (window.FlutterChannel) {
+      window.FlutterChannel.postMessage(JSON.stringify({
+        type: 'playerStateChanged',
+        state: state,
+      }));
+    }
+  });
+
+  function loadScoreBase64(data) {
+    const binaryStr = atob(data);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    api.load(bytes.buffer);
+  }
+
+  function play() { api.play(); }
+  function pause() { api.pause(); }
+  function stop() { api.stop(); }
+  function playPause() { api.playPause(); }
+
+  console.log('alphaTab initialized');
+</script>
+</body>
+</html>
