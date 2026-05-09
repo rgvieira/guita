@@ -2,7 +2,9 @@ package com.rgvieira63.guitarra
 
 import alphaTab.AlphaTabView
 import alphaTab.core.ecmaScript.Uint8Array
+import alphaTab.importer.ScoreLoader
 import android.content.Context
+import android.util.Log
 import android.view.View
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -27,6 +29,10 @@ class AlphaTabNativeView(
     private val messenger: BinaryMessenger
 ) : PlatformView, MethodChannel.MethodCallHandler {
 
+    companion object {
+        private const val TAG = "AlphaTab"
+    }
+
     private val alphaTabView: AlphaTabView
     private val channel: MethodChannel
 
@@ -40,12 +46,14 @@ class AlphaTabNativeView(
             channel.invokeMethod("onScoreLoaded", null)
         }
         api.soundFontLoaded.on {
+            Log.i(TAG, "SoundFont loaded")
             channel.invokeMethod("onSoundFontLoaded", null)
         }
         api.playerStateChanged.on { args ->
             channel.invokeMethod("onPlayerStateChanged", args.state.ordinal)
         }
         api.renderFinished.on {
+            Log.i(TAG, "Render finished")
             channel.invokeMethod("onRenderFinished", null)
         }
 
@@ -56,10 +64,12 @@ class AlphaTabNativeView(
         try {
             context.assets.open("soundfonts/sonivox.sf2").use { inputStream ->
                 val bytes = inputStream.readBytes()
-                val uint8Array = Uint8Array(bytes.toUByteArray())
-                alphaTabView.api.loadSoundFont(uint8Array, false)
+                Log.i(TAG, "SoundFont read ${bytes.size} bytes, loading via Uint8Array...")
+                alphaTabView.api.loadSoundFont(Uint8Array(bytes.toUByteArray()), false)
+                Log.i(TAG, "loadSoundFont called (async)")
             }
         } catch (e: Exception) {
+            Log.e(TAG, "soundFont load error", e)
             channel.invokeMethod("onError", "soundFont load: ${e.message}")
         }
     }
@@ -70,8 +80,27 @@ class AlphaTabNativeView(
             when (call.method) {
                 "loadScore" -> {
                     val path = call.arguments as String
-                    api.load(path)
-                    result.success(null)
+                    try {
+                        val file = java.io.File(path)
+                        Log.i(TAG, "loadScore: path=$path exists=${file.exists()} size=${if (file.exists()) file.length() else -1}")
+                        if (!file.exists()) {
+                            result.error("FILE_NOT_FOUND", "File not found: $path", null)
+                            return@onMethodCall
+                        }
+                        val bytes = file.readBytes()
+                        Log.i(TAG, "Read ${bytes.size} bytes, loading score via ScoreLoader...")
+                        val score = ScoreLoader.loadScoreFromBytes(Uint8Array(bytes.toUByteArray()), api.settings)
+                        if (score != null) {
+                            Log.i(TAG, "Score loaded successfully, rendering...")
+                            api.renderScore(score, null)
+                            result.success(null)
+                        } else {
+                            result.error("LOAD_FAILED", "ScoreLoader returned null", null)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "loadScore error", e)
+                        result.error("LOAD_ERROR", "Failed to load score: ${e.message}", null)
+                    }
                 }
                 "play" -> {
                     api.play()
