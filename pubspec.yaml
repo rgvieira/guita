@@ -39,5 +39,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/soundfonts/TimGM6mb.sf2
+    - assets/soundfonts/sonivox.sf2
     - assets/alphaTab.min.js
     - assets/Bravura.otf

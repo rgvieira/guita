@@ -17,7 +17,10 @@ class _ScoreScreenState extends State<ScoreScreen> {
   String _filePath = '';
   bool _loaded = false;
   bool _ready = false;
-  bool _isPlaying = false;
+  late final List<int> _sfBytes;
+  int _playerState = 0;
+  bool _sfLoaded = false;
+  bool _jsReady = false;
 
   @override
   void dispose() {
@@ -51,6 +54,8 @@ class _ScoreScreenState extends State<ScoreScreen> {
     final fontAsset = await rootBundle.load('assets/Bravura.otf');
     final fontBytes = fontAsset.buffer.asUint8List(fontAsset.offsetInBytes, fontAsset.lengthInBytes);
     final jsCode = await rootBundle.loadString('assets/alphaTab.min.js');
+    final sfAsset = await rootBundle.load('assets/soundfonts/sonivox.sf2');
+    _sfBytes = sfAsset.buffer.asUint8List(sfAsset.offsetInBytes, sfAsset.lengthInBytes);
 
     _server = await HttpServer.bind('127.0.0.1', 0);
     final port = _server!.port;
@@ -66,10 +71,24 @@ class _ScoreScreenState extends State<ScoreScreen> {
         } else if (path.endsWith('.otf')) {
           req.response.headers.contentType = ContentType('font', 'otf');
           req.response.add(fontBytes);
+        } else if (path == '/sonivox.sf2') {
+          req.response.headers.contentType = ContentType('application', 'octet-stream');
+          req.response.add(_sfBytes);
         } else if (path == '/index.html' || path == '/') {
           final html = _buildHtml();
           req.response.headers.contentType = ContentType('text', 'html', charset: 'utf-8');
           req.response.write(html);
+        } else if (path == '/score') {
+          final f = File(_filePath);
+          if (await f.exists()) {
+            final ext = _filePath.split('.').last.toLowerCase();
+            final ct = _mimeForExt(ext);
+            req.response.headers.contentType = ContentType.parse(ct);
+            req.response.add(await f.readAsBytes());
+          } else {
+            req.response.statusCode = 404;
+            req.response.write('Score not found');
+          }
         } else {
           req.response.statusCode = 404;
           req.response.write('Not found');
@@ -85,6 +104,20 @@ class _ScoreScreenState extends State<ScoreScreen> {
     });
 
     await _controller.loadRequest(Uri.parse('http://127.0.0.1:$port/index.html'));
+  }
+
+  String _mimeForExt(String ext) {
+    switch (ext) {
+      case 'gp3': return 'application/x-guitar-pro';
+      case 'gp4': return 'application/x-guitar-pro';
+      case 'gp5': return 'application/x-guitar-pro';
+      case 'gpx': return 'application/x-guitar-pro';
+      case 'xml': return 'application/xml';
+      case 'mxl': return 'application/vnd.recordare.musicxml';
+      case 'cap': return 'application/x-capla';
+      case 'capx': return 'application/x-capla';
+      default:   return 'application/octet-stream';
+    }
   }
 
   String _buildHtml() {
@@ -106,12 +139,24 @@ html,body{width:100%;height:100%;background:#fff}
 <body>
 <div id="status">initializing...</div>
 <div id="alphaTab"></div>
+<script>
+(function(){
+  var OrigAC=window.AudioContext||window.webkitAudioContext;
+  window.__audioCtx=null;
+  window.AudioContext=function(){
+    if(!window.__audioCtx)window.__audioCtx=new OrigAC();
+    return window.__audioCtx;
+  };
+  window.webkitAudioContext=window.AudioContext;
+})();
+</script>
 <script src="alphaTab.min.js"></script>
 <script>
 (function(){
   try{
     var el=document.getElementById('alphaTab');
     var st=document.getElementById('status');
+
     st.textContent='creating api...';
     window.api=new alphaTab.AlphaTabApi(el,{
       staveProfile:1,
@@ -119,14 +164,25 @@ html,body{width:100%;height:100%;background:#fff}
       enablePlayer:true,
       enableCursor:true
     });
-    st.textContent='api ready';
-    window.api.scoreLoaded.on(function(s){
+    st.textContent='loading soundfont...';
+
+    window.api.soundFontLoaded.on(function(){
+      st.textContent='soundfont loaded';
+      FlutterChannel.postMessage(JSON.stringify({type:'sf_loaded'}));
+    });
+    window.api.soundFontLoadFailed.on(function(e){
+      st.textContent='sf load failed';
+      FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'soundfont: '+(e&&e.message||e)}));
+    });
+    window.api.playerReady.on(function(){
+      st.textContent='player ready';
+    });
+    window.api.scoreLoaded.on(function(){
       st.textContent='score loaded';
       FlutterChannel.postMessage(JSON.stringify({type:'ready'}));
     });
     window.api.playerStateChanged.on(function(s){
-      console.log('playerState',s,typeof s,JSON.stringify(s));
-      FlutterChannel.postMessage(JSON.stringify({type:'state',state:s}));
+      FlutterChannel.postMessage(JSON.stringify({type:'state',state:s.state}));
     });
     window.api.renderStarted.on(function(){
       st.textContent='rendering...';
@@ -134,34 +190,72 @@ html,body{width:100%;height:100%;background:#fff}
     window.api.renderFinished.on(function(){
       st.textContent='rendered';
     });
-    window.loadScoreBase64=function(d){
+
+    window.loadScore=function(){
       try{
-        st.textContent='decoding...';
-        var b=atob(d),u=new Uint8Array(b.length);
-        for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);
         st.textContent='loading score...';
-        window.api.load(u.buffer);
+        window.api.load('/score');
       }catch(e){
-        st.textContent='decode error: '+e.message;
-        FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'decode: '+e.message}));
+        st.textContent='load error';
+        FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'load: '+e.message}));
       }
     };
-    window.playPause=function(){
+
+    window.playScore=function(){
       try{
-        if(!window.api){console.log('api null');return;}
-        var r=window.api.playPause();
-        if(r&&r.then){
-          r.then(function(){console.log('play ok')},function(e){console.log('play reject',e&&e.message);FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'play: '+(e&&e.message)}));});
-        }
+        if(!window.api)return;
+        var ctx=window.__audioCtx;
+        if(ctx&&ctx.state==='suspended')ctx.resume();
+        window.api.play();
       }catch(e){
-        FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'playPause: '+e.message}));
+        FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'play: '+e.message}));
       }
     };
-    window.stop=function(){
-      try{window.api.stop()}catch(e){
+
+    window.pauseScore=function(){
+      try{
+        if(window.api)window.api.pause();
+      }catch(e){
+        FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'pause: '+e.message}));
+      }
+    };
+
+    window.stopScore=function(){
+      try{
+        if(window.api)window.api.stop();
+      }catch(e){
         FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'stop: '+e.message}));
       }
     };
+
+    window.nextBar=function(){
+      try{
+        if(window.api)window.api.stop();
+      }catch(e){
+        FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'next: '+e.message}));
+      }
+    };
+
+    window.prevBar=function(){
+      try{
+        if(window.api)window.api.stop();
+      }catch(e){
+        FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'prev: '+e.message}));
+      }
+    };
+
+    FlutterChannel.postMessage(JSON.stringify({type:'js_ready'}));
+
+    fetch('/sonivox.sf2').then(function(r){
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      st.textContent='loading sf...';
+      return r.arrayBuffer();
+    }).then(function(buf){
+      window.api.loadSoundFont(new Uint8Array(buf),false);
+    }).catch(function(e){
+      st.textContent='sf error';
+      FlutterChannel.postMessage(JSON.stringify({type:'err',msg:'sf: '+e.message}));
+    });
   }catch(e){
     var st=document.getElementById('status');
     if(st)st.textContent='init error: '+e.message;
@@ -179,20 +273,27 @@ window.onerror=function(m,s,l,c,e){
 
   Future<void> _onReady() async {
     _ready = true;
-    await _sendFile();
+    if (_jsReady) await _loadScore();
   }
 
-  Future<void> _sendFile() async {
-    if (!_ready) return;
-    try {
-      final f = File(_filePath);
-      if (!await f.exists()) return;
-      final bytes = await f.readAsBytes();
-      final b64 = base64Encode(bytes);
-      await _controller.runJavaScript('loadScoreBase64("$b64");');
-    } catch (e) {
-      debugPrint('sendFile error: $e');
-    }
+  Future<void> _loadScore() async {
+    await _controller.runJavaScript('loadScore();');
+  }
+
+  Future<void> _play() async {
+    await _controller.runJavaScript('playScore();');
+  }
+
+  Future<void> _pause() async {
+    await _controller.runJavaScript('pauseScore();');
+  }
+
+  Future<void> _prev() async {
+    await _controller.runJavaScript('prevBar();');
+  }
+
+  Future<void> _next() async {
+    await _controller.runJavaScript('nextBar();');
   }
 
   void _onMsg(JavaScriptMessage msg) {
@@ -202,9 +303,12 @@ window.onerror=function(m,s,l,c,e){
       debugPrint('onMsg: $type ${msg.message}');
       switch (type) {
         case 'state':
-          final state = d['state'];
-          debugPrint('state value: $state (${state.runtimeType})');
-          setState(() => _isPlaying = state == 1);
+          setState(() => _playerState = d['state'] as int);
+        case 'sf_loaded':
+          setState(() => _sfLoaded = true);
+        case 'js_ready':
+          setState(() => _jsReady = true);
+          if (_ready) _loadScore();
         case 'err':
           debugPrint('alphaTab err: ${d['msg']}');
       }
@@ -213,12 +317,9 @@ window.onerror=function(m,s,l,c,e){
     }
   }
 
-  Future<void> _togglePlayback() async {
-    await _controller.runJavaScript('playPause();');
-  }
-
   @override
   Widget build(BuildContext context) {
+    final isPlaying = _playerState == 1;
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -249,22 +350,24 @@ window.onerror=function(m,s,l,c,e){
               children: [
                 IconButton(
                   icon: const Icon(Icons.skip_previous),
-                  onPressed: () => _controller.runJavaScript('stop();'),
+                  onPressed: _sfLoaded ? _prev : null,
                 ),
                 const SizedBox(width: 16),
                 FloatingActionButton(
                   mini: true,
-                  onPressed: _togglePlayback,
-                  backgroundColor: _isPlaying ? Colors.red : Colors.brown,
+                  onPressed: (_sfLoaded && _ready)
+                      ? (isPlaying ? _pause : _play)
+                      : null,
+                  backgroundColor: isPlaying ? Colors.red : Colors.brown,
                   child: Icon(
-                    _isPlaying ? Icons.stop : Icons.play_arrow,
+                    isPlaying ? Icons.pause : Icons.play_arrow,
                     color: Colors.white,
                   ),
                 ),
                 const SizedBox(width: 16),
                 IconButton(
                   icon: const Icon(Icons.skip_next),
-                  onPressed: () => _controller.runJavaScript('stop();'),
+                  onPressed: _sfLoaded ? _next : null,
                 ),
               ],
             ),
