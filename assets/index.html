@@ -51,13 +51,20 @@
 
   let isReady = false;
 
+  let scoreData = null;
+
   api.scoreLoaded.on((score) => {
     isReady = true;
+    scoreData = score;
+    const tracks = (score.tracks || []).map((t, i) => ({
+      index: i,
+      name: t.name || t.trackName || ('Faixa ' + (i + 1)),
+    }));
     if (window.FlutterChannel) {
       window.FlutterChannel.postMessage(JSON.stringify({
         type: 'scoreLoaded',
         title: score.title || '',
-        tracks: score.tracks?.length || 0,
+        tracks: tracks,
         measures: score.masterBars?.length || 0,
       }));
     }
@@ -78,10 +85,13 @@
     if (window.FlutterChannel) {
       window.FlutterChannel.postMessage(JSON.stringify({
         type: 'playerStateChanged',
-        state: state,
+        state: state === 'playing' ? 1 : 0,
       }));
     }
   });
+
+  let currentTrack = -1;
+  let isHorizontal = false;
 
   function loadScoreBase64(data) {
     const binaryStr = atob(data);
@@ -96,6 +106,40 @@
   function pause() { api.pause(); }
   function stop() { api.stop(); }
   function playPause() { api.playPause(); }
+
+  function selectTrack(index) {
+    if (!scoreData || !scoreData.tracks) return;
+    currentTrack = index;
+    api.renderScore(scoreData, [index]);
+    if (window.FlutterChannel) {
+      const name = (scoreData.tracks[index] && (scoreData.tracks[index].name || scoreData.tracks[index].trackName)) || ('Faixa ' + (index + 1));
+      window.FlutterChannel.postMessage(JSON.stringify({
+        type: 'trackChanged',
+        currentTrack: index,
+        totalTracks: scoreData.tracks.length,
+        name: name,
+      }));
+    }
+  }
+
+  function toggleLayout() {
+    isHorizontal = !isHorizontal;
+    api.settings.display.layoutMode = isHorizontal ? 1 : 0;
+    api.updateSettings();
+    if (scoreData) {
+      if (currentTrack >= 0 && currentTrack < scoreData.tracks.length) {
+        api.renderScore(scoreData, [currentTrack]);
+      } else {
+        api.renderScore(scoreData, null);
+      }
+    }
+    if (window.FlutterChannel) {
+      window.FlutterChannel.postMessage(JSON.stringify({
+        type: 'layoutChanged',
+        isHorizontal: isHorizontal,
+      }));
+    }
+  }
 
   console.log('alphaTab initialized');
 </script>

@@ -21,8 +21,6 @@ class _PracticeScreenState extends ConsumerState<PracticeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Modo de Prática'),
-        backgroundColor: Colors.brown,
-        foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),

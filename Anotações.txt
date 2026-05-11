@@ -6,6 +6,14 @@ flutter pub get
 dart run flutter_native_splash:create
 
 
+#via wifi
+adb connect 192.168.15.2:38647
+flutter clean
+flutter pub get
+
+flutter run -d 192.168.15.2:38647
+
+
 1. flutter pub get - fetch dependencies
 2. flutter run -d windows - run on Windows
 3. flutter run -d chrome - run on web (file picker works differently)

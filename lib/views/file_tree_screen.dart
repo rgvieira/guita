@@ -5,8 +5,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../viewmodels/file_tree_viewmodel.dart';
 import '../models/file_entry.dart';
-import '../widgets/file_tree_widget.dart';
 import '../services/settings_service.dart';
+import '../widgets/file_tree_widget.dart';
 
 class FileTreeScreen extends ConsumerStatefulWidget {
   const FileTreeScreen({super.key});
@@ -15,30 +15,49 @@ class FileTreeScreen extends ConsumerStatefulWidget {
   ConsumerState<FileTreeScreen> createState() => _FileTreeScreenState();
 }
 
-class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
+class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
+    with SingleTickerProviderStateMixin {
   bool _initialized = false;
+  late TabController _tabController;
+  final _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(searchQueryProvider.notifier).state = '';
+      ref.read(showFavoritesOnlyProvider.notifier).state = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
 
   Future<bool> _requestStoragePermission() async {
     if (!Platform.isAndroid) return true;
 
     if (await Permission.storage.isGranted) return true;
-
     if (await Permission.manageExternalStorage.isGranted) return true;
-
-    if (await Permission.photos.isGranted && await Permission.audio.isGranted) return true;
+    if (await Permission.photos.isGranted && await Permission.audio.isGranted) {
+      return true;
+    }
 
     if (await Permission.storage.request().isGranted) return true;
-
     if (await Permission.manageExternalStorage.request().isGranted) return true;
-
-    if (await Permission.photos.request().isGranted && await Permission.audio.request().isGranted) {
+    if (await Permission.photos.request().isGranted &&
+        await Permission.audio.request().isGranted) {
       return true;
     }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Permissão de armazenamento necessária para acessar arquivos'),
+          content: const Text('Permissão de armazenamento necessária'),
           action: SnackBarAction(
             label: 'Configurações',
             onPressed: () => openAppSettings(),
@@ -51,17 +70,17 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filesAsync = ref.watch(fileListProvider);
-    final rootPath = ref.watch(rootPathProvider);
+    final filesAsync = ref.watch(filteredFilesProvider);
+    final rootPaths = ref.watch(rootPathsProvider);
+    final showFavs = ref.watch(showFavoritesOnlyProvider);
+    final query = ref.watch(searchQueryProvider);
 
-    // Load cached folder on first build
     if (!_initialized) {
       _initialized = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final saved = SettingsService.rootPath;
-        if (saved != null && saved.isNotEmpty) {
-          ref.read(rootPathProvider.notifier).state = saved;
-          ref.read(fileListProvider.notifier).scanDirectory(saved);
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final saved = SettingsService.rootPaths;
+        if (saved.isNotEmpty) {
+          ref.read(fileListProvider.notifier).scanDirectories(saved);
         }
       });
     }
@@ -69,12 +88,30 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Guitarra - Partituras'),
-        backgroundColor: Colors.brown,
-        foregroundColor: Colors.white,
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.black,
+          labelColor: Colors.black,
+          unselectedLabelColor: Colors.black45,
+          tabs: const [
+            Tab(text: 'Arquivos', icon: Icon(Icons.library_music)),
+            Tab(text: 'Pastas', icon: Icon(Icons.folder)),
+          ],
+        ),
         actions: [
           IconButton(
+            icon: Icon(
+              showFavs ? Icons.star : Icons.star_border,
+              color: showFavs ? Colors.amber : null,
+            ),
+            tooltip: 'Favoritos',
+            onPressed: () {
+              ref.read(showFavoritesOnlyProvider.notifier).state = !showFavs;
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.folder_open),
-            tooltip: 'Selecionar pasta',
+            tooltip: 'Adicionar pasta',
             onPressed: () => _pickFolder(context, ref),
           ),
           IconButton(
@@ -86,85 +123,138 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
       ),
       body: Column(
         children: [
-          if (rootPath.isNotEmpty)
+          if (rootPaths.isNotEmpty)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.black, width: 1.5),
                 borderRadius: BorderRadius.circular(8),
               ),
               margin: const EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  Icon(Icons.folder, size: 16, color: Colors.brown[700]),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      rootPath,
-                      style: TextStyle(fontSize: 12, color: Colors.brown[700]),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
-                    onPressed: () => ref.read(fileListProvider.notifier).scanDirectory(rootPath),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
+              child: Text(
+                'Pastas: ${rootPaths.join(' | ')}',
+                style: TextStyle(fontSize: 11, color: Colors.brown[700]),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           Expanded(
-            child: filesAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Erro ao acessar arquivos',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      child: Text(
-                        '$e',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      onPressed: () => _requestStoragePermission().then((granted) {
-                        if (granted && rootPath.isNotEmpty) {
-                          ref.read(fileListProvider.notifier).scanDirectory(rootPath);
-                        }
-                      }),
-                      icon: const Icon(Icons.lock_open),
-                      label: const Text('Conceder permissão'),
-                    ),
-                    const SizedBox(height: 8),
-                    if (rootPath.isNotEmpty)
-                      TextButton(
-                        onPressed: () => ref.read(fileListProvider.notifier).scanDirectory(rootPath),
-                        child: const Text('Tentar novamente'),
-                      ),
-                  ],
-                ),
-              ),
-              data: (files) => FileTreeWidget(
-                files: files,
-                rootPath: rootPath,
-                onFileTap: (file) => _openFile(context, file),
-              ),
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildFilesTab(filesAsync, showFavs, query),
+                _buildFoldersTab(rootPaths, ref),
+              ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFilesTab(
+      AsyncValue<List<FileEntry>> filesAsync, bool showFavs, String query) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: 'Buscar arquivo...',
+              prefixIcon: const Icon(Icons.search, color: Colors.brown),
+              suffixIcon: query.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchController.clear();
+                        ref.read(searchQueryProvider.notifier).state = '';
+                      },
+                    )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.brown.shade200),
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+            onChanged: (v) =>
+                ref.read(searchQueryProvider.notifier).state = v,
+          ),
+        ),
+        if (showFavs)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            color: Colors.amber.shade50,
+            child: Text(
+              'Mostrando apenas favoritos',
+              style: TextStyle(fontSize: 12, color: Colors.amber[900]),
+            ),
+          ),
+        Expanded(
+          child: filesAsync.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () => ref
+                        .read(fileListProvider.notifier)
+                        .scanDirectories(ref.read(rootPathsProvider)),
+                    child: const Text('Tentar novamente'),
+                  ),
+                ],
+              ),
+            ),
+            data: (files) => FileTreeWidget(
+              files: files,
+              onFileTap: (file) => _openFile(context, file),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFoldersTab(List<String> rootPaths, WidgetRef ref) {
+    if (rootPaths.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.folder_open, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text('Nenhuma pasta adicionada',
+                style: TextStyle(color: Colors.grey[600])),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.add),
+              label: const Text('Adicionar pasta'),
+              onPressed: () => _pickFolder(context, ref),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView(
+      children: [
+        for (final path in rootPaths) _buildDirectoryNode(path, 0, ref),
+      ],
+    );
+  }
+
+  Widget _buildDirectoryNode(String path, int depth, WidgetRef ref) {
+    final name = path.split(Platform.pathSeparator).last;
+    return _DirectoryTile(
+      path: path,
+      name: name,
+      depth: depth,
+      onFileTap: (file) => _openFile(context, file),
     );
   }
 
@@ -176,14 +266,19 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
     try {
       final result = await FilePicker.platform.getDirectoryPath();
       if (result != null && mounted) {
-        SettingsService.rootPath = result;
-        ref.read(rootPathProvider.notifier).state = result;
-        ref.read(fileListProvider.notifier).scanDirectory(result);
+        ref.read(searchQueryProvider.notifier).state = '';
+        _searchController.clear();
+        ref.read(showFavoritesOnlyProvider.notifier).state = false;
+        ref.read(rootPathsProvider.notifier).addPath(result);
+        await ref
+            .read(fileListProvider.notifier)
+            .scanDirectories(ref.read(rootPathsProvider));
+        _tabController.animateTo(0);
       }
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(
-          content: Text('Erro ao selecionar pasta: $e'),
+          content: Text('Erro: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -191,10 +286,225 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen> {
   }
 
   void _openFile(BuildContext context, FileEntry file) {
-    Navigator.pushNamed(
-      context,
-      '/score',
-      arguments: file.path,
+    Navigator.pushNamed(context, '/score', arguments: file.path);
+  }
+}
+
+class _DirectoryTile extends ConsumerStatefulWidget {
+  final String path;
+  final String name;
+  final int depth;
+  final void Function(FileEntry file)? onFileTap;
+
+  const _DirectoryTile({
+    required this.path,
+    required this.name,
+    required this.depth,
+    this.onFileTap,
+  });
+
+  @override
+  ConsumerState<_DirectoryTile> createState() => _DirectoryTileState();
+}
+
+class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
+  bool _expanded = false;
+  Future<List<FileSystemEntity>>? _childrenFuture;
+
+  Future<List<FileSystemEntity>> _loadChildren() async {
+    final dir = Directory(widget.path);
+    if (!await dir.exists()) return [];
+    return dir.list().toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: () {
+            setState(() {
+              _expanded = !_expanded;
+              if (_expanded && _childrenFuture == null) {
+                _childrenFuture = _loadChildren();
+              }
+            });
+          },
+          child: Padding(
+            padding: EdgeInsets.only(left: widget.depth * 16.0),
+            child: ListTile(
+              dense: true,
+              leading: Icon(
+                _expanded ? Icons.folder_open : Icons.folder,
+                color: Colors.brown,
+              ),
+              title: Text(
+                widget.name,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_expanded)
+          FutureBuilder<List<FileSystemEntity>>(
+            future: _childrenFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return Padding(
+                  padding: EdgeInsets.only(left: (widget.depth + 1) * 16.0),
+                  child: const Padding(
+                    padding: EdgeInsets.all(8.0),
+                    child: LinearProgressIndicator(),
+                  ),
+                );
+              }
+              if (snapshot.hasError) {
+                return Padding(
+                  padding: EdgeInsets.only(left: (widget.depth + 1) * 16.0),
+                  child: ListTile(
+                    dense: true,
+                    title: Text(
+                      'Erro: ${snapshot.error}',
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ),
+                );
+              }
+              final entities = snapshot.data ?? [];
+              final dirs = <Directory>[];
+              final files = <File>[];
+              for (final e in entities) {
+                if (e is Directory) {
+                  dirs.add(e);
+                } else if (e is File) {
+                  files.add(e);
+                }
+              }
+              dirs.sort((a, b) => a.path.compareTo(b.path));
+              files.sort((a, b) => a.path.compareTo(b.path));
+
+              final children = <Widget>[];
+              for (final d in dirs) {
+                final childName = d.path.split(Platform.pathSeparator).last;
+                if (childName.isEmpty || childName.startsWith('.')) continue;
+                children.add(_DirectoryTile(
+                  path: d.path,
+                  name: childName,
+                  depth: widget.depth + 1,
+                  onFileTap: widget.onFileTap,
+                ));
+              }
+              for (final f in files) {
+                final ext = f.path.split('.').last.toLowerCase();
+                if (!FileEntry.supportedExtensions
+                    .any((e) => e.contains(ext))) {
+                  continue;
+                }
+                final childName = f.path.split(Platform.pathSeparator).last;
+                children.add(_FileTile(
+                  path: f.path,
+                  name: childName,
+                  extension: '.$ext',
+                  depth: widget.depth + 1,
+                  onTap: widget.onFileTap,
+                ));
+              }
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: children,
+              );
+            },
+          ),
+      ],
+    );
+  }
+}
+
+class _FileTile extends ConsumerWidget {
+  final String path;
+  final String name;
+  final String extension;
+  final int depth;
+  final void Function(FileEntry file)? onTap;
+
+  const _FileTile({
+    required this.path,
+    required this.name,
+    required this.extension,
+    required this.depth,
+    this.onTap,
+  });
+
+  IconData _iconForExt() {
+    switch (extension) {
+      case '.gp3':
+      case '.gp4':
+      case '.gp5':
+      case '.gpx':
+      case '.gp':
+        return Icons.music_note;
+      case '.mid':
+      case '.midi':
+      case '.kar':
+        return Icons.piano;
+      case '.musicxml':
+      case '.xml':
+        return Icons.description;
+      case '.pdf':
+        return Icons.picture_as_pdf;
+      default:
+        return Icons.insert_drive_file;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final files = ref.watch(fileListProvider).valueOrNull ?? [];
+    final match = files.where((f) => f.path == path).firstOrNull;
+    final isFavorite = match?.isFavorite ?? false;
+
+    return Padding(
+      padding: EdgeInsets.only(left: depth * 16.0),
+      child: ListTile(
+        dense: true,
+        leading: Icon(_iconForExt(), color: Colors.brown),
+        title: Text(
+          name,
+          style: const TextStyle(fontSize: 13),
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: IconButton(
+          icon: Icon(
+            isFavorite ? Icons.star : Icons.star_border,
+            color: isFavorite ? Colors.amber : Colors.grey,
+            size: 18,
+          ),
+          onPressed: () {
+            final entry = match ??
+                FileEntry(
+                  path: path,
+                  name: name,
+                  extension: extension,
+                );
+            ref.read(fileListProvider.notifier).toggleFavorite(entry);
+          },
+          constraints: const BoxConstraints(),
+          padding: EdgeInsets.zero,
+        ),
+        onTap: () {
+          final entry = match ??
+              FileEntry(
+                path: path,
+                name: name,
+                extension: extension,
+              );
+          onTap?.call(entry);
+        },
+      ),
     );
   }
 }

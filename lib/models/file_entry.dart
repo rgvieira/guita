@@ -10,6 +10,7 @@ class FileEntry {
   final bool isDirectory;
   final int size;
   final DateTime lastModified;
+  bool isFavorite;
 
   FileEntry({
     String? id,
@@ -19,6 +20,7 @@ class FileEntry {
     this.isDirectory = false,
     this.size = 0,
     DateTime? lastModified,
+    this.isFavorite = false,
   }) : id = id ?? const Uuid().v4(),
        lastModified = lastModified ?? DateTime.now();
 
@@ -30,6 +32,7 @@ class FileEntry {
     'isDirectory': isDirectory,
     'size': size,
     'lastModified': lastModified.toIso8601String(),
+    'isFavorite': isFavorite,
   };
 
   factory FileEntry.fromJson(Map<String, dynamic> json) => FileEntry(
@@ -40,11 +43,12 @@ class FileEntry {
     isDirectory: json['isDirectory'] as bool,
     size: json['size'] as int,
     lastModified: DateTime.parse(json['lastModified'] as String),
+    isFavorite: json['isFavorite'] as bool? ?? false,
   );
 
   static const supportedExtensions = [
     '.gp3', '.gp4', '.gp5', '.gpx', '.gp',
-    '.mid', '.midi',
+    '.mid', '.midi', '.kar',
     '.musicxml', '.xml',
     '.pdf',
   ];
@@ -67,6 +71,11 @@ class FileEntryBox {
     for (final entry in entries) {
       await b.put(entry.id, jsonEncode(entry.toJson()));
     }
+  }
+
+  static Future<void> updateEntry(FileEntry entry) async {
+    final b = await box;
+    await b.put(entry.id, jsonEncode(entry.toJson()));
   }
 
   static Future<List<FileEntry>> loadList() async {

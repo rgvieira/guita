@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:guitarra/widgets/alpha_tab_view.dart';
+import 'package:guitarra/widgets/midi_score_view.dart';
 
 class ScoreScreen extends StatefulWidget {
   const ScoreScreen({super.key});
@@ -9,37 +10,54 @@ class ScoreScreen extends StatefulWidget {
 }
 
 class _ScoreScreenState extends State<ScoreScreen> {
-  final _alphaTabKey = GlobalKey<AlphaTabViewState>();
+  final _nativeKey = GlobalKey<AlphaTabViewState>();
+  final _midiKey = GlobalKey<MidiScoreViewState>();
   String _filePath = '';
-  bool _initialised = false;
   int _playerState = 0;
-  bool _sfLoaded = false;
+  bool _isHorizontal = false;
+  bool _isMidiOrKar = false;
+  String? _errorMessage;
+  List<int> _channels = [];
+  int _currentChannel = 0;
+  int _trackCount = 1;
+  int _currentTrack = 0;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final path = ModalRoute.of(context)!.settings.arguments as String;
-    if (path != _filePath) {
-      _filePath = path;
-      _initialised = false;
-    }
-    if (!_initialised && _filePath.isNotEmpty) {
-      _initialised = true;
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is String && args != _filePath) {
+      _filePath = args;
+      _errorMessage = null;
+      _channels = [];
+      _currentChannel = 0;
+      _isHorizontal = false;
+      _playerState = 0;
+      _trackCount = 1;
+      _currentTrack = 0;
+      final ext = _filePath.split('.').last.toLowerCase();
+      _isMidiOrKar = ext == 'mid' || ext == 'midi' || ext == 'kar';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final hasTracks = _trackCount > 1 || _channels.length > 1;
     final isPlaying = _playerState == 1;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
           _filePath.split('\\').last.split('/').last,
           style: const TextStyle(fontSize: 14),
         ),
-        backgroundColor: Colors.brown,
-        foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: Icon(_isHorizontal ? Icons.view_agenda : Icons.view_day),
+            tooltip: _isHorizontal ? 'Layout Vertical' : 'Layout Horizontal',
+            onPressed: _toggleLayout,
+          ),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.tune),
             onPressed: () =>
@@ -49,53 +67,179 @@ class _ScoreScreenState extends State<ScoreScreen> {
       ),
       body: Column(
         children: [
-          Expanded(
-            child: AlphaTabView(
-              key: _alphaTabKey,
-              filePath: _filePath,
-              onPlayerStateChanged: (state) =>
-                  setState(() => _playerState = state),
-              onSoundFontLoaded: () => setState(() => _sfLoaded = true),
+          if (_errorMessage != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              color: Colors.red.shade100,
+              child: Text(
+                _errorMessage!,
+                style: const TextStyle(color: Colors.red, fontSize: 13),
+              ),
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            margin: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.black, width: 1.5),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.skip_previous),
-                  onPressed: _sfLoaded ? () {} : null,
-                ),
-                const SizedBox(width: 16),
-                FloatingActionButton(
-                  mini: true,
-                  onPressed: _sfLoaded
-                      ? (isPlaying
-                          ? () => _alphaTabKey.currentState?.pause()
-                          : () => _alphaTabKey.currentState?.play())
-                      : null,
-                  backgroundColor: isPlaying ? Colors.red : Colors.brown,
-                  child: Icon(
-                    isPlaying ? Icons.pause : Icons.play_arrow,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                IconButton(
-                  icon: const Icon(Icons.skip_next),
-                  onPressed: _sfLoaded ? () {} : null,
-                ),
-              ],
-            ),
-          ),
+          Expanded(child: _buildScoreView()),
+          _buildBottomBar(hasTracks, isPlaying),
         ],
       ),
     );
+  }
+
+  Widget _buildScoreView() {
+    if (_isMidiOrKar) {
+      return MidiScoreView(
+        key: _midiKey,
+        filePath: _filePath,
+        onChannelsLoaded: (channels) => setState(() {
+          _channels = channels;
+          _trackCount = channels.length;
+          if (channels.isNotEmpty) _currentChannel = channels.first;
+        }),
+        onError: (msg) => setState(() => _errorMessage = msg),
+        onPlayerStateChanged: (s) => setState(() => _playerState = s),
+      );
+    }
+    return AlphaTabView(
+      key: _nativeKey,
+      filePath: _filePath,
+      onPlayerStateChanged: (s) => setState(() => _playerState = s),
+      onError: (msg) => setState(() => _errorMessage = msg),
+      onTrackChanged: (info) {
+        if (info == null) return;
+        final parts = info.split('/');
+        if (parts.length == 2) {
+          setState(() {
+            _currentTrack = int.tryParse(parts[0]) ?? 0;
+            _trackCount = int.tryParse(parts[1]) ?? 1;
+          });
+        }
+      },
+    );
+  }
+
+  Widget _buildBottomBar(bool hasTracks, bool isPlaying) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.black, width: 1.5),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (hasTracks) _buildTrackSelector() else const SizedBox(width: 8),
+          const SizedBox(width: 8),
+          FloatingActionButton(
+            mini: true,
+            onPressed: () {
+              if (isPlaying) {
+                if (_isMidiOrKar) {
+                  _midiKey.currentState?.pause();
+                } else {
+                  _nativeKey.currentState?.pause();
+                }
+              } else {
+                if (_isMidiOrKar) {
+                  _midiKey.currentState?.play();
+                } else {
+                  _nativeKey.currentState?.play();
+                }
+              }
+            },
+            backgroundColor: isPlaying ? Colors.red : Colors.brown,
+            child: Icon(
+              isPlaying ? Icons.pause : Icons.play_arrow,
+              color: Colors.white,
+            ),
+          ),
+          if (hasTracks)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: _buildTrackInfo(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrackSelector() {
+    if (_isMidiOrKar) {
+      return SizedBox(
+        width: 160,
+        child: DropdownButton<int>(
+          value: _channels.contains(_currentChannel)
+              ? _currentChannel
+              : _channels.firstOrNull ?? 0,
+          isExpanded: true,
+          items: _channels.map((ch) {
+            final name = _midiKey.currentState?.channelNames[ch];
+            return DropdownMenuItem<int>(
+              value: ch,
+              child: Text(
+                name ?? 'Canal $ch',
+                style: const TextStyle(fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          }).toList(),
+          onChanged: (ch) {
+            if (ch == null) return;
+            _midiKey.currentState?.setChannel(ch);
+            setState(() => _currentChannel = ch);
+          },
+        ),
+      );
+    }
+    return SizedBox(
+      width: 160,
+      child: DropdownButton<int>(
+        value: _currentTrack.clamp(0, _trackCount - 1),
+        isExpanded: true,
+        items: List.generate(_trackCount, (i) {
+          final names = _nativeKey.currentState?.trackNames;
+          final label = (names != null && i < names.length)
+              ? names[i]
+              : 'Faixa ${i + 1}';
+          return DropdownMenuItem<int>(
+            value: i,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+        }).toList(),
+        onChanged: (track) {
+          if (track == null) return;
+          _nativeKey.currentState?.setTrack(track);
+          setState(() => _currentTrack = track);
+        },
+      ),
+    );
+  }
+
+  Widget _buildTrackInfo() {
+    if (_trackCount <= 1) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.brown.shade50,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.brown.shade200),
+      ),
+      child: Text(
+        '${_currentTrack + 1}/${_trackCount}',
+        style: TextStyle(fontSize: 11, color: Colors.brown[700]),
+      ),
+    );
+  }
+
+  void _toggleLayout() {
+    setState(() => _isHorizontal = !_isHorizontal);
+    if (_isMidiOrKar) {
+      _midiKey.currentState?.toggleLayout();
+    } else {
+      _nativeKey.currentState?.toggleLayout();
+    }
   }
 }

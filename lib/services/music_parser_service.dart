@@ -15,6 +15,7 @@ class MusicParserService {
         return _parseMusicXml(path);
       case 'mid':
       case 'midi':
+      case 'kar':
         return _parseMidi(path);
       default:
         if (path.contains('.gp')) return _parseGp(path);
@@ -103,32 +104,331 @@ class MusicParserService {
   static Future<ScoreData> _parseMidi(String path) async {
     try {
       final bytes = await File(path).readAsBytes();
-      return ScoreData(measures: [
-        Measure(number: 1, notes: _parseMidiEvents(bytes)),
-      ]);
+      return _parseMidiBytes(bytes, path);
     } catch (e) {
       return ScoreData(measures: []);
     }
   }
 
-  static List<MusicNote> _parseMidiEvents(Uint8List bytes) {
-    final notes = <MusicNote>[];
-    int i = 0;
-    while (i + 7 < bytes.length) {
-      if (bytes[i] == 0x90 && bytes[i + 2] > 0) {
-        final midi = bytes[i + 1];
-        notes.add(MusicNote(
-          midi: midi,
-          step: _midiToStep(midi),
-          octave: _midiToOctave(midi),
-          duration: 4,
-        ));
-        i += 3;
-      } else {
-        i++;
-      }
+  // --- Internal MIDI helpers ---
+  static int _read32BE(Uint8List bytes, int offset) {
+    if (offset + 4 > bytes.length) return 0;
+    return ((bytes[offset] & 0xFF) << 24) |
+           ((bytes[offset + 1] & 0xFF) << 16) |
+           ((bytes[offset + 2] & 0xFF) << 8) |
+           (bytes[offset + 3] & 0xFF);
+  }
+
+  static int _read16BE(Uint8List bytes, int offset) {
+    if (offset + 2 > bytes.length) return 0;
+    return ((bytes[offset] & 0xFF) << 8) | (bytes[offset + 1] & 0xFF);
+  }
+
+  static ScoreData _parseMidiBytes(Uint8List bytes, String path) {
+    int offset = 0;
+
+    // Validate MIDI header
+    if (offset + 14 > bytes.length) return ScoreData(measures: []);
+    if (bytes[0] != 0x4D || bytes[1] != 0x54 || bytes[2] != 0x68 || bytes[3] != 0x64) {
+      return ScoreData(measures: []); // not "MThd"
     }
-    return notes;
+
+    final headerLen = _read32BE(bytes, 4);
+    offset = 8;
+    if (headerLen < 6) return ScoreData(measures: []);
+
+    // format (ignored), numTracks, division
+    _read16BE(bytes, offset); offset += 2; // format
+    final numTracks = _read16BE(bytes, offset); offset += 2;
+    final rawDivision = _read16BE(bytes, offset); offset += 2;
+    offset += (headerLen - 6); // skip extra header bytes
+
+    final int ticksPerQuarterNote;
+    if ((rawDivision & 0x8000) != 0) {
+      ticksPerQuarterNote = 480; // SMPTE fallback
+    } else {
+      ticksPerQuarterNote = rawDivision & 0x7FFF;
+    }
+
+    // Defaults
+    int microPerQuarter = 500000;
+    int numerator = 4;
+    int denominator = 4;
+    // Track data
+    final allNotes = <_RawNote>[];
+    final lyrics = <StringBuffer>[];
+    final tempoEvents = <_TempoEvent>[];
+    final timeSigEvents = <_TimeSigEvent>[];
+    final channelPrograms = <int, int>{};
+    tempoEvents.add(_TempoEvent(0, microPerQuarter));
+    timeSigEvents.add(_TimeSigEvent(0, numerator, denominator));
+    String title = path.split('\\').last.split('/').last.replaceAll(RegExp(r'\.(mid|midi|kar)$', caseSensitive: false), '');
+
+    // Parse each track
+    for (int t = 0; t < numTracks && offset + 8 <= bytes.length; t++) {
+      // Track header
+      if (bytes[offset] != 0x4D || bytes[offset + 1] != 0x54 ||
+          bytes[offset + 2] != 0x72 || bytes[offset + 3] != 0x6B) {
+        break; // not "MTrk"
+      }
+      offset += 4;
+      final trackLen = _read32BE(bytes, offset); offset += 4;
+      final trackEnd = (offset + trackLen).clamp(0, bytes.length);
+
+      int currentTick = 0;
+      int runningStatus = 0;
+
+      while (offset < trackEnd) {
+        if (offset >= bytes.length) break;
+
+        // Read delta-time VLQ
+        int delta = 0;
+        {
+          int shift = 0;
+          while (offset < bytes.length) {
+            final b = bytes[offset++];
+            delta = (delta << 7) | (b & 0x7F);
+            shift += 7;
+            if ((b & 0x80) == 0) break;
+            if (shift > 28) { delta = 0; break; }
+          }
+        }
+        currentTick += delta;
+
+        if (offset >= trackEnd) break;
+
+        int status = bytes[offset];
+
+        // --- Meta event (FF xx) ---
+        if (status == 0xFF) {
+          offset++;
+          if (offset >= trackEnd) break;
+          final metaType = bytes[offset++];
+          // Read VLQ for meta data length (manually, tracking offset)
+          int metaLen = 0;
+          {
+            int shift = 0;
+            while (offset < trackEnd) {
+              final b = bytes[offset++];
+              metaLen = (metaLen << 7) | (b & 0x7F);
+              shift += 7;
+              if ((b & 0x80) == 0) break;
+              if (shift > 28) { metaLen = 0; break; }
+            }
+          }
+          if (metaLen < 0 || offset + metaLen > trackEnd) { offset = trackEnd; continue; }
+          final metaStart = offset;
+          offset += metaLen;
+
+          switch (metaType) {
+            case 0x00: break; // Sequence Number
+            case 0x01: // Text
+              break;
+            case 0x02: break; // Copyright
+            case 0x03: // Track Name
+              if (metaLen > 0 && t == 0) {
+                final name = String.fromCharCodes(bytes.sublist(metaStart, metaStart + metaLen)).trim();
+                if (name.isNotEmpty) title = name;
+              }
+              break;
+            case 0x04: break; // Instrument
+            case 0x05: // Lyric (KAR)
+              if (metaLen > 0) {
+                final line = String.fromCharCodes(bytes.sublist(metaStart, metaStart + metaLen)).trim();
+                if (line.isNotEmpty) {
+                  if (lyrics.length <= t) lyrics.add(StringBuffer());
+                  if (t < lyrics.length) {
+                    if (lyrics[t].isNotEmpty) lyrics[t].write(' ');
+                    lyrics[t].write(line);
+                  }
+                }
+              }
+              break;
+            case 0x51: // Tempo (FF 51 03 tt tt tt)
+              if (metaLen >= 3) {
+                microPerQuarter = (bytes[metaStart] << 16) |
+                                  (bytes[metaStart + 1] << 8) |
+                                  bytes[metaStart + 2];
+                tempoEvents.add(_TempoEvent(currentTick, microPerQuarter));
+              }
+              break;
+            case 0x58: // Time Signature (FF 58 04 nn dd cc bb)
+              if (metaLen >= 4) {
+                numerator = bytes[metaStart];
+                denominator = 1 << bytes[metaStart + 1];
+                timeSigEvents.add(_TimeSigEvent(currentTick, numerator, denominator));
+              }
+              break;
+            case 0x59: break; // Key Signature
+            case 0x2F: break; // End of Track
+            default: break;
+          }
+          continue;
+        }
+
+        // --- Running status ---
+        if (status < 0x80) {
+          offset--;
+          status = runningStatus;
+        } else {
+          offset++;
+          runningStatus = status;
+        }
+
+        if ((status & 0xF0) == 0x90) {
+          // Note On
+          if (offset + 1 >= trackEnd) break;
+          final note = bytes[offset++];
+          final velocity = bytes[offset++];
+          if (velocity > 0 && note < 128) {
+            allNotes.add(_RawNote(
+              midi: note,
+              tickStart: currentTick,
+              tickEnd: currentTick + ticksPerQuarterNote,
+              channel: status & 0x0F,
+              velocity: velocity,
+            ));
+          }
+        } else if ((status & 0xF0) == 0x80) {
+          // Note Off - match with note-on to set end tick
+          if (offset + 1 >= trackEnd) break;
+          final note = bytes[offset++];
+          offset++; // skip velocity
+          if (note < 128) {
+            for (int i = allNotes.length - 1; i >= 0; i--) {
+              if (allNotes[i].midi == note &&
+                  allNotes[i].channel == (status & 0x0F) &&
+                  allNotes[i].tickEnd <= allNotes[i].tickStart) {
+                allNotes[i].tickEnd = currentTick;
+                break;
+              }
+            }
+          }
+        } else if ((status & 0xF0) == 0xA0) {
+          // Polyphonic Aftertouch
+          if (offset + 1 < trackEnd) offset += 2;
+        } else if ((status & 0xF0) == 0xB0) {
+          // Control Change
+          if (offset + 1 < trackEnd) offset += 2;
+        } else if ((status & 0xF0) == 0xC0) {
+          // Program Change
+          if (offset < trackEnd) {
+            final program = bytes[offset++];
+            channelPrograms[status & 0x0F] = program;
+          }
+        } else if ((status & 0xF0) == 0xD0) {
+          // Channel Aftertouch
+          if (offset < trackEnd) offset++;
+        } else if ((status & 0xF0) == 0xE0) {
+          // Pitch Bend
+          if (offset + 1 < trackEnd) offset += 2;
+        } else if (status == 0xF0 || status == 0xF7) {
+          // System Exclusive - skip until 0xF7
+          offset = _skipSysEx(bytes, offset, trackEnd);
+        } else {
+          if (offset < trackEnd) offset++;
+        }
+      }
+
+      offset = trackEnd;
+    }
+
+    // Sort all notes by tick
+    allNotes.sort((a, b) => a.tickStart.compareTo(b.tickStart));
+
+    // Sort event lists by tick (should already be in order, but ensure it)
+    tempoEvents.sort((a, b) => a.tick.compareTo(b.tick));
+    timeSigEvents.sort((a, b) => a.tick.compareTo(b.tick));
+
+    // Helper: compute elapsed ms at given tick using tempo map
+    double computeMsAtTick(int tick) {
+      if (ticksPerQuarterNote <= 0) return tick * 0.5;
+      double elapsedMs = 0;
+      int prevTick = 0;
+      int prevMicroPQ = 500000;
+      for (final ev in tempoEvents) {
+        if (ev.tick >= tick) break;
+        if (ev.tick > prevTick) {
+          final ticks = ev.tick - prevTick;
+          elapsedMs += ticks * (prevMicroPQ / ticksPerQuarterNote / 1000.0);
+        }
+        prevTick = ev.tick;
+        prevMicroPQ = ev.microPerQuarter;
+      }
+      if (tick > prevTick) {
+        final ticks = tick - prevTick;
+        elapsedMs += ticks * (prevMicroPQ / ticksPerQuarterNote / 1000.0);
+      }
+      return elapsedMs;
+    }
+
+    // Helper: find the time sig values active at a given tick
+    _TimeSigEvent timeSigAt(int tick) {
+      _TimeSigEvent? sig;
+      for (final s in timeSigEvents) {
+        if (s.tick <= tick) sig = s;
+      }
+      return sig ?? timeSigEvents.first;
+    }
+
+    // Group notes into measures using per-note tempo & time sig
+    final Map<int, List<MusicNote>> measureMap = {};
+
+    for (final raw in allNotes) {
+      final startMs = computeMsAtTick(raw.tickStart);
+      final endMs = raw.tickEnd > raw.tickStart
+          ? computeMsAtTick(raw.tickEnd)
+          : startMs + 200.0;
+
+      final sig = timeSigAt(raw.tickStart);
+      final ticksPerMeasure = ticksPerQuarterNote * sig.numerator;
+      final measureNum = ticksPerMeasure > 0
+          ? (raw.tickStart ~/ ticksPerMeasure) + 1
+          : 1;
+
+      final durBeats = ticksPerQuarterNote > 0
+          ? ((raw.tickEnd - raw.tickStart) / ticksPerQuarterNote)
+          : 0.25;
+      final duration = (durBeats * 4).round().clamp(1, 16);
+
+      measureMap.putIfAbsent(measureNum, () => []);
+      measureMap[measureNum]!.add(MusicNote(
+        midi: raw.midi,
+        step: _midiToStep(raw.midi),
+        octave: _midiToOctave(raw.midi),
+        duration: duration,
+        startTime: startMs,
+        endTime: endMs,
+        channel: raw.channel,
+      ));
+    }
+
+    final sortedKeys = measureMap.keys.toList()..sort();
+    final firstSig = timeSigEvents.isNotEmpty ? timeSigEvents.first : _TimeSigEvent(0, 4, 4);
+    final firstTempo = tempoEvents.isNotEmpty ? tempoEvents.first : _TempoEvent(0, 500000);
+    final initialBpm = 60000000.0 / firstTempo.microPerQuarter;
+
+    final measures = sortedKeys.map((k) =>
+      Measure(number: k, notes: measureMap[k]!, bpm: initialBpm)
+    ).toList();
+
+    return ScoreData(
+      title: title,
+      bpm: initialBpm,
+      beatsPerMeasure: firstSig.numerator,
+      beatUnit: firstSig.denominator,
+      measures: measures,
+      channelPrograms: channelPrograms,
+    );
+  }
+
+  static int _skipSysEx(Uint8List bytes, int start, int trackEnd) {
+    int offset = start;
+    while (offset < trackEnd) {
+      if (bytes[offset] == 0xF7) return offset + 1;
+      offset++;
+    }
+    return offset;
   }
 
   static Future<ScoreData> _parseGp(String path) async {
@@ -518,4 +818,35 @@ class MusicParserService {
   }
 
   static int _midiToOctave(int midi) => (midi ~/ 12) - 1;
+}
+
+class _RawNote {
+  final int midi;
+  final int tickStart;
+  int tickEnd;
+  final int channel;
+  final int velocity;
+
+  _RawNote({
+    required this.midi,
+    required this.tickStart,
+    required this.tickEnd,
+    required this.channel,
+    required this.velocity,
+  });
+}
+
+class _TempoEvent {
+  final int tick;
+  final int microPerQuarter;
+
+  _TempoEvent(this.tick, this.microPerQuarter);
+}
+
+class _TimeSigEvent {
+  final int tick;
+  final int numerator;
+  final int denominator;
+
+  _TimeSigEvent(this.tick, this.numerator, this.denominator);
 }

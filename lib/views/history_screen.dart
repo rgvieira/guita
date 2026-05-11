@@ -14,8 +14,6 @@ class HistoryScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Histórico de Treinos'),
-        backgroundColor: Colors.brown,
-        foregroundColor: Colors.white,
         actions: [
           if (sessions.isNotEmpty)
             IconButton(

@@ -28,8 +28,6 @@ class _ExportConfigScreenState extends ConsumerState<ExportConfigScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Exportar'),
-        backgroundColor: Colors.brown,
-        foregroundColor: Colors.white,
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

@@ -1,72 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/file_entry.dart';
-import '../painters/chord_painter.dart';
+import '../viewmodels/file_tree_viewmodel.dart';
 
-class FileTreeWidget extends StatelessWidget {
+class FileTreeWidget extends ConsumerWidget {
   final List<FileEntry> files;
-  final Function(FileEntry) onFileTap;
-  final String rootPath;
+  final void Function(FileEntry file)? onFileTap;
 
-  const FileTreeWidget({
-    super.key,
-    required this.files,
-    required this.onFileTap,
-    this.rootPath = '',
-  });
+  const FileTreeWidget({super.key, required this.files, this.onFileTap});
 
-  @override
-  Widget build(BuildContext context) {
-    if (files.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.music_note, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'Nenhum arquivo encontrado',
-              style: TextStyle(fontSize: 18, color: Colors.grey[600]),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return ListView.separated(
-      itemCount: files.length,
-      separatorBuilder: (context, index) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final file = files[index];
-        final icon = _getFileIcon(file.extension);
-        final isInRoot = rootPath.isEmpty || file.path.startsWith(rootPath);
-        final displayPath = isInRoot && rootPath.isNotEmpty
-            ? file.path.substring(rootPath.length + 1)
-            : file.path;
-
-        return ListTile(
-          leading: Icon(icon, color: Colors.brown),
-          title: Text(
-            file.name,
-            style: const TextStyle(fontWeight: FontWeight.w500),
-          ),
-          subtitle: Text(
-            displayPath,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-          ),
-          trailing: Text(
-            _formatSize(file.size),
-            style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-          ),
-          onTap: () => onFileTap(file),
-        );
-      },
-    );
-  }
-
-  IconData _getFileIcon(String ext) {
-    switch (ext.toLowerCase()) {
+  IconData _iconForExt(String ext) {
+    switch (ext) {
       case '.gp3':
       case '.gp4':
       case '.gp5':
@@ -75,32 +19,56 @@ class FileTreeWidget extends StatelessWidget {
         return Icons.music_note;
       case '.mid':
       case '.midi':
+      case '.kar':
         return Icons.piano;
       case '.musicxml':
       case '.xml':
-        return Icons.library_music;
+        return Icons.description;
+      case '.pdf':
+        return Icons.picture_as_pdf;
       default:
         return Icons.insert_drive_file;
     }
   }
 
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-}
-
-class ChordDisplayWidget extends StatelessWidget {
-  final String chordName;
-
-  const ChordDisplayWidget({super.key, required this.chordName});
-
   @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: const Size(120, 140),
-      painter: ChordPainter(chordName: chordName),
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (files.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.folder_off, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text('Nenhum arquivo encontrado',
+                style: TextStyle(color: Colors.grey[600], fontSize: 16)),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: files.length,
+      itemBuilder: (context, index) {
+        final file = files[index];
+        return ListTile(
+          leading: Icon(_iconForExt(file.extension), color: Colors.brown),
+          title: Text(file.name, style: const TextStyle(fontSize: 14)),
+          subtitle: Text(
+            '${file.size ~/ 1024} KB',
+            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+          ),
+          trailing: IconButton(
+            icon: Icon(
+              file.isFavorite ? Icons.star : Icons.star_border,
+              color: file.isFavorite ? Colors.amber : Colors.grey,
+            ),
+            onPressed: () =>
+                ref.read(fileListProvider.notifier).toggleFavorite(file),
+          ),
+          onTap: () => onFileTap?.call(file),
+        );
+      },
     );
   }
 }

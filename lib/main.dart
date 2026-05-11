@@ -32,7 +32,10 @@ class Guitar2App extends StatelessWidget {
         useMaterial3: true,
         appBarTheme: const AppBarTheme(
           centerTitle: true,
-          elevation: 1,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.black,
         ),
         cardTheme: CardThemeData(
           elevation: 0,
