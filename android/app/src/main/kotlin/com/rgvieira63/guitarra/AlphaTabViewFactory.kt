@@ -7,7 +7,11 @@ import alphaTab.core.ecmaScript.Uint8Array
 import alphaTab.importer.ScoreLoader
 import alphaTab.model.Score
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.util.Log
+import java.io.ByteArrayOutputStream
 import android.view.View
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -46,6 +50,8 @@ class AlphaTabNativeView(
     private var sfPath: String? = null
     private var sfLoadAttempted: Boolean = false
 
+    private var printingInProgress = false
+
     init {
         Log.w(TAG, ">>>> AlphaTabNativeView INIT <<<<")
 
@@ -55,6 +61,9 @@ class AlphaTabNativeView(
 
         val a = alphaTabView.api
         Log.w(TAG, "ALPHATAB: api obtained OK")
+
+        // Use Android Canvas engine so view.draw(canvas) captures the score for printing
+        a.settings.core.engine = "android"
 
         a.settings.player.enablePlayer = true
         a.settings.player.enableCursor = true
@@ -67,11 +76,16 @@ class AlphaTabNativeView(
             loadedScore = score
             channel.invokeMethod("onScoreLoaded", null)
             val names = mutableListOf<String>()
+            val programs = mutableListOf<Int>()
             for (i in 0 until score.tracks.count()) {
-                val name = score.tracks.get(i).name
+                val track = score.tracks.get(i)
+                val name = track.name
                 names.add(name ?: "Faixa ${i + 1}")
+                val prog = track.playbackInfo?.program
+                programs.add(if (prog is Int) prog else 0)
             }
             channel.invokeMethod("onTrackNames", names.joinToString("|"))
+            channel.invokeMethod("onTrackPrograms", programs.joinToString(","))
         }
         a.soundFontLoaded.on {
             Log.w(TAG, "ALPHATAB: onSoundFontLoaded fires!")
@@ -176,6 +190,12 @@ class AlphaTabNativeView(
                     Log.w(TAG, "ALPHATAB: setSoundFontPath=$sfPath")
                     result.success(null)
                 }
+                "setLayoutMode" -> {
+                    isHorizontal = call.arguments as Boolean
+                    Log.w(TAG, "ALPHATAB: setLayoutMode -> ${if (isHorizontal) "Horizontal" else "Page"}")
+                    api.settings.display.layoutMode = if (isHorizontal) LayoutMode.Horizontal else LayoutMode.Page
+                    result.success(null)
+                }
                 "loadScore" -> {
                     val path = call.arguments as String
                     doLoadScore(path)
@@ -243,11 +263,87 @@ class AlphaTabNativeView(
                     api.settings.display.layoutMode = if (isHorizontal) LayoutMode.Horizontal else LayoutMode.Page
                     val score = loadedScore
                     if (score != null) {
-                        val tracks = if (trackSelected && currentTrack < score.tracks.count())
-                            DoubleList(currentTrack.toDouble()) else null
-                        api.renderScore(score, tracks)
+                        api.renderScore(score, null)
                     }
                     result.success(isHorizontal)
+                }
+                "reRender" -> {
+                    Log.w(TAG, "ALPHATAB: reRender")
+                    val score = loadedScore
+                    if (score != null) {
+                        api.renderScore(score, null)
+                    }
+                    result.success(null)
+                }
+                "printScore" -> {
+                    try {
+                        if (printingInProgress) {
+                            result.error("PRINT_IN_PROGRESS", "Print already in progress", null)
+                            return@onMethodCall
+                        }
+                        printingInProgress = true
+                        val view = alphaTabView
+                        if (view.width <= 0 || view.height <= 0) {
+                            result.error("VIEW_INVALID", "View has no size", null)
+                            return@onMethodCall
+                        }
+                        val w = view.width
+                        val h = view.height
+                        Log.w(TAG, "ALPHATAB: printScore w=$w h=$h")
+
+                        // Force software layer so view.draw(canvas) captures the score
+                        val prevLayerType = view.layerType
+                        view.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+
+                        val pages = mutableListOf<ByteArray>()
+
+                        // 1) Try view.draw(canvas) with software layer
+                        if (w > 0 && h > 0) {
+                            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            val canvas = Canvas(bitmap)
+                            canvas.drawColor(Color.WHITE)
+                            view.draw(canvas)
+                            val stream = ByteArrayOutputStream()
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                            val bytes = stream.toByteArray()
+                            // Check whether the capture has actual content
+                            if (bytes.size > 200) {
+                                Log.w(TAG, "ALPHATAB: view.draw produced ${bytes.size} bytes")
+                                pages.add(bytes)
+                            } else {
+                                Log.w(TAG, "ALPHATAB: view.draw too small (${bytes.size}), trying buildDrawingCache")
+                                // 2) Fallback: use drawing cache
+                                view.isDrawingCacheEnabled = true
+                                view.buildDrawingCache()
+                                val cacheBmp = view.drawingCache
+                                if (cacheBmp != null && !cacheBmp.isRecycled) {
+                                    val s2 = ByteArrayOutputStream()
+                                    cacheBmp.compress(Bitmap.CompressFormat.PNG, 100, s2)
+                                    val b2 = s2.toByteArray()
+                                    if (b2.size > 200) {
+                                        pages.add(b2)
+                                    }
+                                }
+                                view.isDrawingCacheEnabled = false
+                                view.destroyDrawingCache()
+                            }
+                            bitmap.recycle()
+                        }
+
+                        // Restore layer type
+                        view.setLayerType(prevLayerType, null)
+
+                        if (pages.isEmpty()) {
+                            result.error("PRINT_EMPTY", "No captured content", null)
+                        } else {
+                            result.success(pages)
+                        }
+                    } catch (e: Exception) {
+                        Log.wtf(TAG, "ALPHATAB: printScore error: ${e.message}", e)
+                        result.error("PRINT_ERROR", e.message, null)
+                    } finally {
+                        printingInProgress = false
+                    }
                 }
                 else -> result.notImplemented()
             }

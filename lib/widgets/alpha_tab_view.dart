@@ -5,20 +5,24 @@ import 'package:path_provider/path_provider.dart';
 
 class AlphaTabView extends StatefulWidget {
   final String filePath;
+  final bool isHorizontal;
   final void Function(int playerState)? onPlayerStateChanged;
   final void Function()? onSoundFontLoaded;
   final void Function()? onScoreLoaded;
   final void Function(String message)? onError;
   final void Function(String? trackInfo)? onTrackChanged;
+  final VoidCallback? onTrackData;
 
   const AlphaTabView({
     super.key,
     required this.filePath,
+    this.isHorizontal = false,
     this.onPlayerStateChanged,
     this.onSoundFontLoaded,
     this.onScoreLoaded,
     this.onError,
     this.onTrackChanged,
+    this.onTrackData,
   });
 
   @override
@@ -30,6 +34,7 @@ class AlphaTabViewState extends State<AlphaTabView> {
   int trackCount = 1;
   int currentTrack = 0;
   List<String>? _trackNames;
+  List<int>? _trackPrograms;
 
   @override
   void didUpdateWidget(AlphaTabView oldWidget) {
@@ -56,6 +61,7 @@ class AlphaTabViewState extends State<AlphaTabView> {
   }
 
   Future<void> _loadFile() async {
+    await _channel?.invokeMethod('setLayoutMode', widget.isHorizontal);
     await _channel!.invokeMethod('loadScore', widget.filePath);
   }
 
@@ -82,6 +88,7 @@ class AlphaTabViewState extends State<AlphaTabView> {
   }
 
   List<String>? get trackNames => _trackNames;
+  List<int>? get trackPrograms => _trackPrograms;
 
   Future<dynamic> _handleNativeMessage(MethodCall call) async {
     switch (call.method) {
@@ -94,6 +101,16 @@ class AlphaTabViewState extends State<AlphaTabView> {
           setState(() {
             _trackNames = namesStr.split('|');
           });
+          widget.onTrackData?.call();
+        }
+        break;
+      case 'onTrackPrograms':
+        final programsStr = call.arguments as String?;
+        if (programsStr != null && programsStr.isNotEmpty) {
+          setState(() {
+            _trackPrograms = programsStr.split(',').map((s) => int.tryParse(s) ?? 0).toList();
+          });
+          widget.onTrackData?.call();
         }
         break;
       case 'onSoundFontLoaded':
@@ -131,5 +148,11 @@ class AlphaTabViewState extends State<AlphaTabView> {
   Future<bool> toggleLayout() async {
     final result = await _channel?.invokeMethod<bool>('toggleLayout');
     return result ?? false;
+  }
+
+  Future<List<Uint8List>> printScore() async {
+    final result = await _channel?.invokeMethod('printScore');
+    if (result == null) return [];
+    return (result as List<dynamic>).cast<Uint8List>();
   }
 }

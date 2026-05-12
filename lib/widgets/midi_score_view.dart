@@ -1,5 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import '../models/music_note.dart';
 import '../services/music_parser_service.dart';
 import '../services/midi_player_service.dart';
@@ -66,7 +70,11 @@ class MidiScoreViewState extends State<MidiScoreView> {
 
   @override
   void dispose() {
-    _stop();
+    _isPlaying = false;
+    _playTimer?.cancel();
+    _playTimer = null;
+    _player.allNotesOff();
+    _currentNoteIndex = -1;
     _transformationController.dispose();
     super.dispose();
   }
@@ -151,6 +159,63 @@ class MidiScoreViewState extends State<MidiScoreView> {
     });
   }
 
+  Future<Uint8List> printScore() async {
+    if (_data == null || _data!.measures.isEmpty) return Uint8List(0);
+    final doc = pw.Document();
+    final allMeasures = _data!.measures;
+    final pageFormat = PdfPageFormat.a4;
+    const mw = MidiScoreCanvas.measureWidth;
+    final sh = MidiScoreCanvas.systemHeight;
+    const sm = MidiScoreCanvas.systemMargin;
+    const leftMargin = MidiScoreCanvas.leftMargin;
+    const clefSpace = MidiScoreCanvas.clefSpace;
+
+    final pageW = pageFormat.width - 40;
+    final pageH = pageFormat.height - 40;
+    final barsPerRow = ((pageW - leftMargin - clefSpace - 20) / mw).floor().clamp(1, 16).toInt();
+    final rowsPerPage = (pageH / (sh + sm)).floor().clamp(1, 99).toInt();
+    final measuresPerPage = barsPerRow * rowsPerPage;
+
+    for (int start = 0; start < allMeasures.length; start += measuresPerPage) {
+      final end = (start + measuresPerPage).clamp(0, allMeasures.length).toInt();
+      final pageMeasures = allMeasures.sublist(start, end);
+      final rows = (pageMeasures.length / barsPerRow).ceil().clamp(1, rowsPerPage).toInt();
+      final size = Size(pageW, rows * (sh + sm) + sm);
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      final painter = MidiScoreCanvas(
+        measures: pageMeasures,
+        beatsPerMeasure: _data!.beatsPerMeasure,
+        beatUnit: _data!.beatUnit,
+        channelFilter: _selectedChannel,
+        isHorizontal: false,
+        scale: 1.0,
+        highlightNoteIndex: -1,
+        playableNotes: const [],
+      );
+      painter.paint(canvas, size);
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(
+        size.width.toInt().clamp(1, 10000).toInt(),
+        size.height.toInt().clamp(1, 10000).toInt(),
+      );
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData != null) {
+        doc.addPage(pw.Page(
+          pageFormat: pageFormat,
+          margin: const pw.EdgeInsets.all(20),
+          build: (ctx) => pw.Image(
+            pw.MemoryImage(byteData.buffer.asUint8List()),
+            fit: pw.BoxFit.contain,
+          ),
+        ));
+      }
+      picture.dispose();
+    }
+    return doc.save();
+  }
+
   void _scrollToNote(int noteIndex) {
     if (_data == null ||
         noteIndex < 0 ||
@@ -177,17 +242,33 @@ class MidiScoreViewState extends State<MidiScoreView> {
     final screenWidth = MediaQuery.of(context).size.width;
     final barsPerRow = ((screenWidth - 60) / mw).floor().clamp(1, 16);
 
+    double noteFrac = 0.5;
+    final measure = measures[measureIdx];
+    final measureNotes = measure.notes
+        .where((n) => n.channel == _selectedChannel && !n.isRest)
+        .toList()
+      ..sort((a, b) => a.startTime.compareTo(b.startTime));
+    if (measureNotes.length > 1) {
+      final firstTime = measureNotes.first.startTime;
+      final lastTime = measureNotes.last.startTime;
+      final duration = lastTime - firstTime;
+      if (duration > 0) {
+        noteFrac = (note.startTime - firstTime) / duration;
+      }
+    }
+    final noteOffsetInMeasure = 4 + noteFrac * (mw - 8);
+
     double noteX, noteY;
     if (_isHorizontal) {
       final staffY = sm + 20;
-      noteX = 10 + leftMargin + clefSpace + measureIdx * mw + mw / 2;
+      noteX = 10 + leftMargin + clefSpace + measureIdx * mw + noteOffsetInMeasure;
       noteY = staffY + MidiScoreCanvas.staffHeight / 2;
     } else {
       final row = measureIdx ~/ barsPerRow;
       final col = measureIdx % barsPerRow;
       final rowWidth = barsPerRow * mw + leftMargin + 20;
       final offsetX = (screenWidth - rowWidth) / 2;
-      noteX = offsetX + leftMargin + clefSpace + col * mw + mw / 2;
+      noteX = offsetX + leftMargin + clefSpace + col * mw + noteOffsetInMeasure;
       noteY = sm + row * (sh + sm) + MidiScoreCanvas.staffHeight / 2;
     }
 
@@ -613,9 +694,16 @@ class MidiScoreCanvas extends CustomPainter {
       return;
     }
 
-    final spacing = (measureWidth - 8) / groups.length;
+    final measureStart = groups.first.first.startTime;
+    final measureEnd = groups.last.first.startTime;
+    final measureDuration = measureEnd - measureStart;
+
     for (int gi = 0; gi < groups.length; gi++) {
-      final gx = mx + 4 + gi * spacing;
+      final gStart = groups[gi].first.startTime;
+      final fraction = measureDuration > 0
+          ? (gStart - measureStart) / measureDuration
+          : gi / (groups.length - 1);
+      final gx = mx + 4 + fraction * (measureWidth - 8);
       for (final n in groups[gi]) {
         final isHl = _isHighlighted(n);
         _drawNote(canvas, gx, sy, n, 0, isHighlight: isHl);

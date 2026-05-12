@@ -1,4 +1,8 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:guitarra/widgets/alpha_tab_view.dart';
 import 'package:guitarra/widgets/midi_score_view.dart';
 
@@ -58,6 +62,13 @@ class _ScoreScreenState extends State<ScoreScreen> {
             onPressed: _toggleLayout,
           ),
           const SizedBox(width: 4),
+          if (_filePath.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.print),
+              tooltip: 'Imprimir / PDF',
+              onPressed: _printScore,
+            ),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.tune),
             onPressed: () =>
@@ -101,6 +112,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
     return AlphaTabView(
       key: _nativeKey,
       filePath: _filePath,
+      isHorizontal: _isHorizontal,
       onPlayerStateChanged: (s) => setState(() => _playerState = s),
       onError: (msg) => setState(() => _errorMessage = msg),
       onTrackChanged: (info) {
@@ -113,6 +125,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
           });
         }
       },
+      onTrackData: () => setState(() {}),
     );
   }
 
@@ -197,9 +210,12 @@ class _ScoreScreenState extends State<ScoreScreen> {
         isExpanded: true,
         items: List.generate(_trackCount, (i) {
           final names = _nativeKey.currentState?.trackNames;
-          final label = (names != null && i < names.length)
-              ? names[i]
-              : 'Faixa ${i + 1}';
+          String label;
+          if (names != null && i < names.length && names[i].isNotEmpty) {
+            label = names[i];
+          } else {
+            label = 'Faixa ${i + 1}';
+          }
           return DropdownMenuItem<int>(
             value: i,
             child: Text(
@@ -228,18 +244,57 @@ class _ScoreScreenState extends State<ScoreScreen> {
         border: Border.all(color: Colors.brown.shade200),
       ),
       child: Text(
-        '${_currentTrack + 1}/${_trackCount}',
+        '${_currentTrack + 1}/$_trackCount',
         style: TextStyle(fontSize: 11, color: Colors.brown[700]),
       ),
     );
   }
 
   void _toggleLayout() {
-    setState(() => _isHorizontal = !_isHorizontal);
     if (_isMidiOrKar) {
       _midiKey.currentState?.toggleLayout();
+      setState(() => _isHorizontal = !_isHorizontal);
     } else {
-      _nativeKey.currentState?.toggleLayout();
+      _nativeKey.currentState?.toggleLayout().then((h) {
+        setState(() => _isHorizontal = h);
+      });
+    }
+  }
+
+  Future<void> _printScore() async {
+    try {
+      Uint8List pdfBytes;
+      if (_isMidiOrKar) {
+        final midiState = _midiKey.currentState;
+        if (midiState == null) return;
+        pdfBytes = await midiState.printScore();
+      } else {
+        final nativeState = _nativeKey.currentState;
+        if (nativeState == null) return;
+        final pngList = await nativeState.printScore();
+        if (pngList.isEmpty) return;
+        final doc = pw.Document();
+        for (final pngBytes in pngList) {
+          final img = pw.MemoryImage(pngBytes);
+          doc.addPage(pw.Page(
+            pageFormat: PdfPageFormat.a4,
+            build: (ctx) => pw.Center(child: pw.Image(img, fit: pw.BoxFit.contain)),
+          ));
+        }
+        pdfBytes = await doc.save();
+      }
+      if (pdfBytes.isEmpty) return;
+      final baseName = _filePath.split('\\').last.split('/').last.split('.').first;
+      await Printing.sharePdf(
+        bytes: pdfBytes,
+        filename: '$baseName.pdf',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao imprimir: $e')),
+        );
+      }
     }
   }
 }

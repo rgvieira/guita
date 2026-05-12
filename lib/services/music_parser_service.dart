@@ -284,7 +284,7 @@ class MusicParserService {
             allNotes.add(_RawNote(
               midi: note,
               tickStart: currentTick,
-              tickEnd: currentTick + ticksPerQuarterNote,
+              tickEnd: -1,
               channel: status & 0x0F,
               velocity: velocity,
             ));
@@ -298,7 +298,7 @@ class MusicParserService {
             for (int i = allNotes.length - 1; i >= 0; i--) {
               if (allNotes[i].midi == note &&
                   allNotes[i].channel == (status & 0x0F) &&
-                  allNotes[i].tickEnd <= allNotes[i].tickStart) {
+                  allNotes[i].tickEnd < 0) {
                 allNotes[i].tickEnd = currentTick;
                 break;
               }
@@ -376,7 +376,7 @@ class MusicParserService {
 
     for (final raw in allNotes) {
       final startMs = computeMsAtTick(raw.tickStart);
-      final endMs = raw.tickEnd > raw.tickStart
+      final endMs = raw.tickEnd >= 0 && raw.tickEnd > raw.tickStart
           ? computeMsAtTick(raw.tickEnd)
           : startMs + 200.0;
 
