@@ -1,12 +1,14 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/music_note.dart';
+import '../services/audio_effects_service.dart';
 import '../services/music_parser_service.dart';
 import '../services/midi_player_service.dart';
+import 'midi_visualizer.dart';
 
 class MidiScoreView extends StatefulWidget {
   final String filePath;
@@ -14,6 +16,7 @@ class MidiScoreView extends StatefulWidget {
   final void Function(int current, int total, String name)? onTrackChanged;
   final void Function(String error)? onError;
   final void Function(int state)? onPlayerStateChanged;
+  final AudioEffectsService? effectsService;
 
   const MidiScoreView({
     super.key,
@@ -22,6 +25,7 @@ class MidiScoreView extends StatefulWidget {
     this.onTrackChanged,
     this.onError,
     this.onPlayerStateChanged,
+    this.effectsService,
   });
 
   @override
@@ -41,10 +45,13 @@ class MidiScoreViewState extends State<MidiScoreView> {
   int _currentNoteIndex = -1;
   Timer? _playTimer;
   List<MusicNote> _playableNotes = [];
+  List<MusicNote> _allPlayableNotes = [];
   final TransformationController _transformationController =
       TransformationController();
+  final Set<int> _activeMidiNotes = {};
 
   Map<int, String> get channelNames => Map.unmodifiable(_channelNames);
+  Set<int> get activeMidiNotes => _activeMidiNotes;
 
   @override
   void initState() {
@@ -62,6 +69,7 @@ class MidiScoreViewState extends State<MidiScoreView> {
       _selectedChannel = 0;
       _error = null;
       _playableNotes = [];
+      _allPlayableNotes = [];
       _currentNoteIndex = -1;
       _transformationController.value = Matrix4.identity();
       _load();
@@ -75,6 +83,7 @@ class MidiScoreViewState extends State<MidiScoreView> {
     _playTimer = null;
     _player.allNotesOff();
     _currentNoteIndex = -1;
+    _activeMidiNotes.clear();
     _transformationController.dispose();
     super.dispose();
   }
@@ -121,10 +130,15 @@ class MidiScoreViewState extends State<MidiScoreView> {
 
   void _updatePlayableNotes() {
     if (_data == null) return;
-    _playableNotes = _data!.allNotes
-        .where((n) => n.channel == _selectedChannel && !n.isRest)
+    // All channels for playback
+    _allPlayableNotes = _data!.allNotes
+        .where((n) => !n.isRest)
         .toList()
       ..sort((a, b) => a.startTime.compareTo(b.startTime));
+    // Selected channel for display
+    _playableNotes = _allPlayableNotes
+        .where((n) => n.channel == _selectedChannel)
+        .toList();
   }
 
   void setChannel(int channel) {
@@ -162,7 +176,20 @@ class MidiScoreViewState extends State<MidiScoreView> {
   Future<Uint8List> printScore() async {
     if (_data == null || _data!.measures.isEmpty) return Uint8List(0);
     final doc = pw.Document();
-    final allMeasures = _data!.measures;
+    // Only include measures that have notes from the selected channel
+    final filteredMeasures = _data!.measures
+        .where((m) => m.notes.any((n) => n.channel == _selectedChannel))
+        .toList();
+    if (filteredMeasures.isEmpty) return Uint8List(0);
+    // Renumber sequentially for clean output
+    for (int i = 0; i < filteredMeasures.length; i++) {
+      filteredMeasures[i] = Measure(
+        number: i + 1,
+        notes: filteredMeasures[i].notes,
+        bpm: filteredMeasures[i].bpm,
+      );
+    }
+
     final pageFormat = PdfPageFormat.a4;
     const mw = MidiScoreCanvas.measureWidth;
     final sh = MidiScoreCanvas.systemHeight;
@@ -175,10 +202,12 @@ class MidiScoreViewState extends State<MidiScoreView> {
     final barsPerRow = ((pageW - leftMargin - clefSpace - 20) / mw).floor().clamp(1, 16).toInt();
     final rowsPerPage = (pageH / (sh + sm)).floor().clamp(1, 99).toInt();
     final measuresPerPage = barsPerRow * rowsPerPage;
+    final totalPages = (filteredMeasures.length / measuresPerPage).ceil().clamp(1, 999);
 
-    for (int start = 0; start < allMeasures.length; start += measuresPerPage) {
-      final end = (start + measuresPerPage).clamp(0, allMeasures.length).toInt();
-      final pageMeasures = allMeasures.sublist(start, end);
+    for (int p = 0; p < totalPages; p++) {
+      final start = p * measuresPerPage;
+      final end = (start + measuresPerPage).clamp(0, filteredMeasures.length).toInt();
+      final pageMeasures = filteredMeasures.sublist(start, end);
       final rows = (pageMeasures.length / barsPerRow).ceil().clamp(1, rowsPerPage).toInt();
       final size = Size(pageW, rows * (sh + sm) + sm);
 
@@ -196,10 +225,9 @@ class MidiScoreViewState extends State<MidiScoreView> {
       );
       painter.paint(canvas, size);
       final picture = recorder.endRecording();
-      final image = await picture.toImage(
-        size.width.toInt().clamp(1, 10000).toInt(),
-        size.height.toInt().clamp(1, 10000).toInt(),
-      );
+      final w = size.width.toInt().clamp(1, 10000);
+      final h = size.height.toInt().clamp(1, 10000);
+      final image = await picture.toImage(w, h);
       final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       if (byteData != null) {
         doc.addPage(pw.Page(
@@ -214,6 +242,31 @@ class MidiScoreViewState extends State<MidiScoreView> {
       picture.dispose();
     }
     return doc.save();
+  }
+
+  Widget _scrollButton(IconData icon, double delta) {
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: Material(
+        color: Colors.brown.shade100.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () {
+            final matrix = _transformationController.value;
+            final tx = matrix.entry(0, 3);
+            final ty = matrix.entry(1, 3);
+            final m = Matrix4.identity();
+            m.setEntry(0, 0, matrix.entry(0, 0));
+            m.setEntry(1, 1, matrix.entry(1, 1));
+            m.setTranslationRaw(tx, ty + delta, 0);
+            _transformationController.value = m;
+          },
+          child: Icon(icon, size: 20, color: Colors.brown[700]),
+        ),
+      ),
+    );
   }
 
   void _scrollToNote(int noteIndex) {
@@ -249,12 +302,11 @@ class MidiScoreViewState extends State<MidiScoreView> {
         .toList()
       ..sort((a, b) => a.startTime.compareTo(b.startTime));
     if (measureNotes.length > 1) {
+      final bpm = measure.bpm > 0 ? measure.bpm : 120.0;
+      final beatMs = 60000 / bpm;
       final firstTime = measureNotes.first.startTime;
-      final lastTime = measureNotes.last.startTime;
-      final duration = lastTime - firstTime;
-      if (duration > 0) {
-        noteFrac = (note.startTime - firstTime) / duration;
-      }
+      final beatsFromStart = (note.startTime - firstTime) / beatMs;
+      noteFrac = (beatsFromStart / _data!.beatsPerMeasure).clamp(0.0, 1.0);
     }
     final noteOffsetInMeasure = 4 + noteFrac * (mw - 8);
 
@@ -290,24 +342,105 @@ class MidiScoreViewState extends State<MidiScoreView> {
   void zoomOut() => setState(() => _scale = (_scale / 1.2).clamp(0.5, 4.0));
 
   Future<void> play() async {
-    if (_playableNotes.isEmpty) return;
+    if (_allPlayableNotes.isEmpty) return;
     _stop();
     _isPlaying = true;
+    _currentNoteIndex = -1;
     widget.onPlayerStateChanged?.call(1);
     await _player.init();
 
-    final bpm = _data?.bpm ?? 120;
-    final beatMs = (60000 / bpm).round().clamp(50, 10000);
+    // Group ALL notes by startTime (chords across all channels)
+    final groups = <List<MusicNote>>[];
+    for (final n in _allPlayableNotes) {
+      if (groups.isEmpty || (n.startTime - groups.last.first.startTime) > 5.0) {
+        groups.add([n]);
+      } else {
+        groups.last.add(n);
+      }
+    }
 
-    for (int i = 0; i < _playableNotes.length && _isPlaying; i++) {
-      final note = _playableNotes[i];
-      setState(() => _currentNoteIndex = i);
-      _scrollToNote(i);
-      await _player.noteOn(note.midi);
-      unawaited(Future.delayed(
-          Duration(milliseconds: (beatMs * 0.8).round()),
-          () => _player.noteOff(note.midi)));
-      await Future.delayed(Duration(milliseconds: beatMs));
+    // Pre-roll: small delay to ensure UI updates before audio starts
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    DateTime prevTime = DateTime.now();
+    double prevStartTime = groups.first.first.startTime;
+
+    for (int gi = 0; gi < groups.length && _isPlaying; gi++) {
+      final group = groups[gi];
+      final currentTime = group.first.startTime;
+
+      // Compute wait based on real elapsed time (drift-proof)
+      if (gi > 0) {
+        final expectedDelta = currentTime - prevStartTime;
+        final actualElapsed = DateTime.now().difference(prevTime).inMilliseconds.toDouble();
+        final remaining = (expectedDelta - actualElapsed).round().clamp(1, 300000);
+        await Future.delayed(Duration(milliseconds: remaining));
+        if (!_isPlaying) break;
+      }
+
+      // Fire all noteOns concurrently for simultaneous chord playback
+      final now = DateTime.now();
+      final effects = widget.effectsService;
+      final noteMidis = group.map((n) => n.midi).toList();
+
+      // Apply distortion via velocity clamping
+      final velocities = group.map((n) {
+        if (effects != null && effects.distortionDrive > 0) {
+          return effects.applyDistortion(n.velocity);
+        }
+        return n.velocity;
+      }).toList();
+
+      await Future.wait(List.generate(noteMidis.length,
+        (i) => _player.noteOn(noteMidis[i], velocity: velocities[i])));
+
+      // Track active notes for visualizer
+      setState(() => _activeMidiNotes.addAll(noteMidis));
+
+      // Schedule note-off per note
+      for (int ni = 0; ni < group.length; ni++) {
+        final note = group[ni];
+        final m = noteMidis[ni];
+        final dur = (note.endTime - note.startTime).round().clamp(30, 60000);
+        unawaited(Future.delayed(
+          Duration(milliseconds: dur),
+          () {
+            if (_isPlaying) {
+              _player.noteOff(m);
+              setState(() => _activeMidiNotes.remove(m));
+            }
+          },
+        ));
+      }
+
+      // Delay effect: schedule delayed copies with feedback
+      if (effects != null && effects.delayMs > 0 && effects.delayFeedback > 0) {
+        for (int rep = 1; rep <= 3; rep++) {
+          final delay = effects.delayMs * rep;
+          final fbVel = (100 * effects.delayFeedback * (1 - rep * 0.25)).round().clamp(1, 100);
+          unawaited(Future.delayed(Duration(milliseconds: delay), () {
+            if (!_isPlaying) return;
+            for (int ni = 0; ni < noteMidis.length; ni++) {
+              _player.noteOn(noteMidis[ni], velocity: fbVel);
+              _player.noteOff(noteMidis[ni]);
+            }
+          }));
+        }
+      }
+
+      // Update highlight - find matching note in selected channel
+      final matching = _playableNotes.cast<MusicNote?>().firstWhere(
+        (n) => n!.startTime == currentTime,
+        orElse: () => null,
+      );
+      if (matching != null) {
+        final idx = _playableNotes.indexOf(matching);
+        setState(() => _currentNoteIndex = idx);
+        _scrollToNote(idx);
+      }
+
+      prevTime = now;
+      prevStartTime = currentTime;
     }
 
     _isPlaying = false;
@@ -325,6 +458,7 @@ class MidiScoreViewState extends State<MidiScoreView> {
     _playTimer = null;
     _player.allNotesOff();
     _currentNoteIndex = -1;
+    _activeMidiNotes.clear();
     if (mounted) setState(() {});
   }
 
@@ -353,24 +487,80 @@ class MidiScoreViewState extends State<MidiScoreView> {
       return const Center(child: Text('Nenhum compasso para exibir'));
     }
 
-    return InteractiveViewer(
-      transformationController: _transformationController,
-      constrained: !_isHorizontal,
-      minScale: 0.5,
-      maxScale: 4.0,
-      child: CustomPaint(
-        size: _computeCanvasSize(measures),
-        painter: MidiScoreCanvas(
-          measures: measures,
-          beatsPerMeasure: _data!.beatsPerMeasure,
-          beatUnit: _data!.beatUnit,
-          channelFilter: _selectedChannel,
-          isHorizontal: _isHorizontal,
-          scale: _scale,
-          highlightNoteIndex: _currentNoteIndex,
-          playableNotes: _playableNotes,
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            children: [
+              Focus(
+                autofocus: true,
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent) {
+                    const step = 100.0;
+                    final matrix = _transformationController.value;
+                    final tx = matrix.entry(0, 3);
+                    final ty = matrix.entry(1, 3);
+                    double dx = 0, dy = 0;
+                    if (event.logicalKey == LogicalKeyboardKey.arrowUp) { dy = step; }
+                    else if (event.logicalKey == LogicalKeyboardKey.arrowDown) { dy = -step; }
+                    else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) { dx = step; }
+                    else if (event.logicalKey == LogicalKeyboardKey.arrowRight) { dx = -step; }
+                    else if (event.logicalKey == LogicalKeyboardKey.pageUp) { dy = step * 4; }
+                    else if (event.logicalKey == LogicalKeyboardKey.pageDown) { dy = -step * 4; }
+                    if (dx != 0 || dy != 0) {
+                      final m = Matrix4.identity();
+                      m.setEntry(0, 0, matrix.entry(0, 0));
+                      m.setEntry(1, 1, matrix.entry(1, 1));
+                      m.setTranslationRaw(tx + dx, ty + dy, 0);
+                      _transformationController.value = m;
+                      return KeyEventResult.handled;
+                    }
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: InteractiveViewer(
+                  transformationController: _transformationController,
+                  constrained: !_isHorizontal,
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: CustomPaint(
+                    size: _computeCanvasSize(measures),
+                    painter: MidiScoreCanvas(
+                      measures: measures,
+                      beatsPerMeasure: _data!.beatsPerMeasure,
+                      beatUnit: _data!.beatUnit,
+                      channelFilter: _selectedChannel,
+                      isHorizontal: _isHorizontal,
+                      scale: _scale,
+                      highlightNoteIndex: _currentNoteIndex,
+                      playableNotes: _playableNotes,
+                    ),
+                  ),
+                ),
+              ),
+              // Scroll buttons overlay
+              Positioned(
+                right: 8,
+                bottom: 16,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _scrollButton(Icons.keyboard_arrow_up, 150),
+                    const SizedBox(height: 4),
+                    _scrollButton(Icons.keyboard_arrow_down, -150),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
+        if (_isPlaying)
+          MidiVisualizer(
+            key: ValueKey('visualizer_$_isPlaying'),
+            isPlaying: _isPlaying,
+            activeMidiNotes: _activeMidiNotes,
+          ),
+      ],
     );
   }
 
@@ -427,7 +617,7 @@ class MidiScoreCanvas extends CustomPainter {
 
     final paint = Paint()
       ..color = const Color(0xFF5D4037)
-      ..strokeWidth = 0.8;
+      ..strokeWidth = 1.0;
 
     if (isHorizontal) {
       _drawHorizontalLayout(canvas, size, paint);
@@ -489,28 +679,37 @@ class MidiScoreCanvas extends CustomPainter {
   }
 
   void _drawNote(
-      Canvas canvas, double x, double y, MusicNote note, int idx, {bool isHighlight = false}) {
-    const noteHeadW = 7.0;
-    const noteHeadH = 5.0;
+      Canvas canvas, double x, double y, MusicNote note, int idx,
+      {bool isHighlight = false, double accidentalOffset = 0}) {
+    const noteHeadW = 9.0;
+    const noteHeadH = 6.5;
+
+    final pos = _notePosition(note);
+    final ny = _noteY(y, pos);
+    final isHalf = note.duration >= 8 && note.duration < 16;
+    final isEighth = note.duration >= 2 && note.duration < 4;
+    final isSixteenth = note.duration == 1;
+    final isWhole = note.duration >= 16;
+    final stemUp = pos > 4;
+    final stemLen = lineSpacing * 3.5;
 
     // Ledger lines
-    final pos = _notePosition(note);
-    if (pos < 0) {
-      for (int l = 0; l >= pos; l -= 2) {
+    if (pos <= 0) {
+      for (int l = (pos <= -2 ? 0 : 0); l >= pos; l -= 2) {
         final ly = _noteY(y, l);
         canvas.drawLine(
           Offset(x - noteHeadW - 2, ly),
           Offset(x + noteHeadW + 2, ly),
-          Paint()..color = const Color(0xFF5D4037)..strokeWidth = 0.6,
+          Paint()..color = const Color(0xFF5D4037)..strokeWidth = 0.8,
         );
       }
-    } else if (pos > 8) {
+    } else if (pos >= 8) {
       for (int l = 8; l <= pos; l += 2) {
         final ly = _noteY(y, l);
         canvas.drawLine(
           Offset(x - noteHeadW - 2, ly),
           Offset(x + noteHeadW + 2, ly),
-          Paint()..color = const Color(0xFF5D4037)..strokeWidth = 0.6,
+          Paint()..color = const Color(0xFF5D4037)..strokeWidth = 0.8,
         );
       }
     }
@@ -522,66 +721,134 @@ class MidiScoreCanvas extends CustomPainter {
         final tp = TextPainter(
           text: const TextSpan(
               text: '\u{266F}',
-              style: TextStyle(fontSize: 9, color: Color(0xFF5D4037))),
+              style: TextStyle(fontSize: 10, color: Color(0xFF5D4037))),
           textDirection: TextDirection.ltr,
         )..layout();
-        tp.paint(canvas, Offset(x - noteHeadW - tp.width - 2, _noteY(y, pos) - tp.height / 2));
+        tp.paint(canvas, Offset(x - noteHeadW - tp.width - 3 + accidentalOffset, ny - tp.height / 2));
       } else if (acc == 'b') {
         final tp = TextPainter(
           text: const TextSpan(
               text: '\u{266D}',
-              style: TextStyle(fontSize: 9, color: Color(0xFF5D4037))),
+              style: TextStyle(fontSize: 10, color: Color(0xFF5D4037))),
           textDirection: TextDirection.ltr,
         )..layout();
-        tp.paint(canvas, Offset(x - noteHeadW - tp.width - 2, _noteY(y, pos) - tp.height / 2));
+        tp.paint(canvas, Offset(x - noteHeadW - tp.width - 3 + accidentalOffset, ny - tp.height / 2));
       }
     }
 
-    // Note head
-    final ny = _noteY(y, pos);
+    // Highlight background
     if (isHighlight) {
       canvas.drawOval(
-        Rect.fromCenter(center: Offset(x, ny), width: noteHeadW * 1.5, height: noteHeadH * 1.5),
+        Rect.fromCenter(center: Offset(x, ny), width: noteHeadW * 1.6, height: noteHeadH * 1.6),
         Paint()..color = Colors.orange,
       );
     }
-    canvas.drawOval(
-      Rect.fromCenter(center: Offset(x, ny), width: noteHeadW, height: noteHeadH),
-      Paint()..color = Colors.black,
-    );
 
-    // Stem
-    final stemUp = pos < 4;
-    final stemLen = lineSpacing * 3.5;
-    if (stemUp) {
-      canvas.drawLine(
-        Offset(x + noteHeadW / 2, ny),
-        Offset(x + noteHeadW / 2, ny - stemLen),
-        Paint()..color = const Color(0xFF5D4037)..strokeWidth = 1.0,
-      );
-    } else {
-      canvas.drawLine(
-        Offset(x - noteHeadW / 2, ny),
-        Offset(x - noteHeadW / 2, ny + stemLen),
-        Paint()..color = const Color(0xFF5D4037)..strokeWidth = 1.0,
-      );
+    // Whole note: hollow oval, no stem
+    if (isWhole) {
+      _drawNoteHead(canvas, x, ny, noteHeadW, noteHeadH, isFilled: false);
+      return;
     }
 
-    // Flag for eighth notes
-    if (note.duration >= 8 && note.duration < 16) {
-      final flagX = stemUp ? x + noteHeadW / 2 : x - noteHeadW / 2;
-      final flagTop = stemUp ? ny - stemLen : ny + stemLen;
-      final flagPath = Path()
-        ..moveTo(flagX, flagTop)
-        ..quadraticBezierTo(
-          stemUp ? flagX + 7 : flagX - 7,
-          stemUp ? flagTop + lineSpacing : flagTop - lineSpacing,
-          stemUp ? flagX + 2 : flagX - 2,
-          stemUp ? flagTop + lineSpacing * 1.5 : flagTop - lineSpacing * 1.5,
-        );
-      canvas.drawPath(flagPath, Paint()
-        ..color = const Color(0xFF5D4037)
-        ..style = PaintingStyle.fill);
+    // Note head
+    _drawNoteHead(canvas, x, ny, noteHeadW, noteHeadH, isFilled: !isHalf);
+
+    // Stem
+    if (!isWhole) {
+      final stemX = stemUp ? x + noteHeadW / 2 : x - noteHeadW / 2;
+      final stemTop = stemUp ? ny - stemLen : ny + stemLen;
+      canvas.drawLine(
+        Offset(stemX, ny),
+        Offset(stemX, stemTop),
+        Paint()..color = const Color(0xFF5D4037)..strokeWidth = 1.2,
+      );
+
+      // Flag
+      if (isEighth || isSixteenth) {
+        final flagDir = stemUp ? 1.0 : -1.0;
+        _drawFlag(canvas, stemX, stemTop, flagDir);
+        if (isSixteenth) {
+          _drawFlag(canvas, stemX, stemTop + lineSpacing * 1.4 * flagDir, flagDir);
+        }
+      }
+    }
+  }
+
+  void _drawNoteHead(Canvas canvas, double x, double y, double w, double h, {bool isFilled = true}) {
+    final path = Path()
+      ..moveTo(x, y - h / 2)
+      ..cubicTo(x + w * 0.3, y - h / 2, x + w * 0.5, y - h * 0.15, x + w * 0.5, y)
+      ..cubicTo(x + w * 0.5, y + h * 0.15, x + w * 0.3, y + h / 2, x, y + h / 2)
+      ..cubicTo(x - w * 0.15, y + h / 2, x - w * 0.5, y + h * 0.1, x - w * 0.5, y)
+      ..cubicTo(x - w * 0.5, y - h * 0.1, x - w * 0.15, y - h / 2, x, y - h / 2)
+      ..close();
+    canvas.drawPath(path, Paint()
+      ..color = Colors.black
+      ..style = isFilled ? PaintingStyle.fill : PaintingStyle.stroke
+      ..strokeWidth = isFilled ? 0 : 1.5);
+  }
+
+  void _drawFlag(Canvas canvas, double x, double y, double dir) {
+    final fh = lineSpacing * 1.8;
+    final fx = x;
+    final flagPath = Path()
+      ..moveTo(fx, y)
+      ..cubicTo(
+        fx + 10 * dir, y + 3,
+        fx + 12 * dir, y + fh * 0.6,
+        fx + 3 * dir, y + fh,
+      )
+      ..cubicTo(
+        fx + 5 * dir, y + fh * 0.7,
+        fx + 4 * dir, y + fh * 0.35,
+        fx, y + fh * 0.25,
+      )
+      ..close();
+    canvas.drawPath(flagPath, Paint()
+      ..color = const Color(0xFF5D4037)
+      ..style = PaintingStyle.fill);
+  }
+
+  void _drawRest(Canvas canvas, double x, double y, int duration) {
+    final fill = Paint()
+      ..color = const Color(0xFF5D4037)
+      ..style = PaintingStyle.fill;
+
+    if (duration >= 16) {
+      // Whole rest: rectangle below 4th line
+      final ry = y + 4 * lineSpacing - 2;
+      canvas.drawRect(Rect.fromLTWH(x - 5, ry, 10, lineSpacing * 0.6), fill);
+    } else if (duration >= 8) {
+      // Half rest: rectangle on 3rd line
+      final ry = y + 2 * lineSpacing - 2;
+      canvas.drawRect(Rect.fromLTWH(x - 5, ry, 10, lineSpacing * 0.6), fill);
+    } else if (duration >= 4) {
+      // Quarter rest: hand-drawn zigzag path
+      final r = lineSpacing * 0.5;
+      final cx = x;
+      final cy = y + 2 * lineSpacing;
+      final path = Path()
+        ..moveTo(cx - r, cy - r * 2.5)
+        ..cubicTo(cx + r * 1.5, cy - r * 2, cx + r * 1.2, cy - r * 0.5, cx, cy - r * 0.3)
+        ..cubicTo(cx - r, cy - r * 0.1, cx - r * 1.3, cy + r * 0.3, cx - r * 0.5, cy + r * 1.2)
+        ..cubicTo(cx, cy + r * 1.8, cx + r * 0.5, cy + r * 2.2, cx + r * 0.8, cy + r * 2.5)
+        ..cubicTo(cx + r * 0.2, cy + r * 2.0, cx - r * 0.3, cy + r * 1.5, cx - r * 0.1, cy + r * 1.0)
+        ..cubicTo(cx + r * 0.1, cy + r * 0.5, cx + r * 0.3, cy + r * 0.0, cx, cy - r * 0.2)
+        ..cubicTo(cx - r * 0.3, cy - r * 0.4, cx - r * 0.5, cy - r * 1.0, cx, cy - r * 1.5)
+        ..close();
+      canvas.drawPath(path, fill);
+    } else {
+      // Eighth rest
+      final r = lineSpacing * 0.5;
+      final cx = x;
+      final cy = y + 3 * lineSpacing;
+      final path = Path()
+        ..moveTo(cx + r * 0.8, cy - r * 2.5)
+        ..cubicTo(cx + r * 2.0, cy - r * 1.5, cx + r * 1.8, cy - r * 0.2, cx + r * 0.5, cy + r * 0.5)
+        ..cubicTo(cx - r * 0.8, cy + r * 1.2, cx - r * 1.5, cy + r * 1.8, cx - r * 1.2, cy + r * 2.8)
+        ..lineTo(cx + r * 1.2, cy + r * 0.5)
+        ..close();
+      canvas.drawPath(path, fill);
     }
   }
 
@@ -621,17 +888,6 @@ class MidiScoreCanvas extends CustomPainter {
 
         _drawMeasureNotes(canvas, x, systemY, measure, paint);
 
-        if (measureIdx % 5 == 0) {
-          final tp = TextPainter(
-            text: TextSpan(
-              text: '${measure.number}',
-              style: const TextStyle(fontSize: 8, color: Color(0xFF5D4037)),
-            ),
-            textDirection: TextDirection.ltr,
-          )..layout();
-          tp.paint(canvas, Offset(x, systemY - 14));
-        }
-
         x += measureWidth;
         measureIdx++;
       }
@@ -656,17 +912,6 @@ class MidiScoreCanvas extends CustomPainter {
       _drawMeasureBar(canvas, x - 3, staffY, paint);
       _drawMeasureNotes(canvas, x, staffY, measure, paint);
 
-      if (i % 5 == 0) {
-        final tp = TextPainter(
-          text: TextSpan(
-            text: '${measure.number}',
-            style: const TextStyle(fontSize: 8, color: Color(0xFF5D4037)),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp.paint(canvas, Offset(x, staffY - 14));
-      }
-
       x += measureWidth;
     }
     _drawFinalBar(canvas, x, staffY, paint);
@@ -677,36 +922,60 @@ class MidiScoreCanvas extends CustomPainter {
     if (notes.isEmpty) return;
     notes.sort((a, b) => a.startTime.compareTo(b.startTime));
 
+    // Group by startTime for chords
     final groups = <List<MusicNote>>[];
     for (final n in notes) {
-      if (groups.isEmpty || (n.startTime - groups.last.first.startTime).abs() > 30) {
+      if (n.isRest) {
+        groups.add([n]);
+      } else if (groups.isEmpty || (n.startTime - groups.last.first.startTime).abs() > 30) {
         groups.add([n]);
       } else {
         groups.last.add(n);
       }
     }
 
-    if (groups.length == 1) {
-      for (final n in groups.first) {
-        final isHl = _isHighlighted(n);
-        _drawNote(canvas, mx + measureWidth / 2, sy, n, 0, isHighlight: isHl);
-      }
-      return;
-    }
-
-    final measureStart = groups.first.first.startTime;
-    final measureEnd = groups.last.first.startTime;
-    final measureDuration = measureEnd - measureStart;
+    final bpm = measure.bpm > 0 ? measure.bpm : 120.0;
+    final beatMs = 60000 / bpm;
+    final measureStart = notes.first.startTime;
+    final forceSingle = groups.length == 1;
 
     for (int gi = 0; gi < groups.length; gi++) {
-      final gStart = groups[gi].first.startTime;
-      final fraction = measureDuration > 0
-          ? (gStart - measureStart) / measureDuration
-          : gi / (groups.length - 1);
+      final group = groups[gi];
+      final gStart = group.first.startTime;
+      final beatsFromStart = (gStart - measureStart) / beatMs;
+      final fraction = forceSingle
+          ? 0.5
+          : (beatsFromStart / beatsPerMeasure).clamp(0.0, 1.0);
       final gx = mx + 4 + fraction * (measureWidth - 8);
-      for (final n in groups[gi]) {
-        final isHl = _isHighlighted(n);
-        _drawNote(canvas, gx, sy, n, 0, isHighlight: isHl);
+
+      // Check if any note in chord needs accidental
+      final hasAccidentals = group.any((n) => n.step.length > 1 && !n.isRest);
+
+      for (final n in group) {
+        if (n.isRest) {
+          _drawRest(canvas, gx, sy, n.duration);
+        } else {
+          // Offset accidentals for chord notes to avoid overlap
+          double accOffset = 0;
+          if (hasAccidentals && group.length > 1) {
+            final noteIdx = group.indexOf(n);
+            accOffset = -noteIdx * 5.0;
+          }
+          _drawNote(canvas, gx, sy, n, 0,
+              isHighlight: _isHighlighted(n), accidentalOffset: accOffset);
+        }
+      }
+
+      // Draw measure number on first group of each measure
+      if (gi == 0 && measure.number % 5 == 1) {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: '${measure.number}',
+            style: const TextStyle(fontSize: 8, color: Color(0xFF5D4037)),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(gx, sy - 14));
       }
     }
   }
@@ -719,7 +988,6 @@ class MidiScoreCanvas extends CustomPainter {
   }
 
   bool _noteMatches(MusicNote n) {
-    if (n.isRest) return false;
     if (channelFilter < 0) return true;
     return n.channel == channelFilter;
   }

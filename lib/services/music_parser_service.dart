@@ -400,6 +400,7 @@ class MusicParserService {
         startTime: startMs,
         endTime: endMs,
         channel: raw.channel,
+        velocity: raw.velocity,
       ));
     }
 

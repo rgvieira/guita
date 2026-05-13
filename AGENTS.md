@@ -1,23 +1,25 @@
-# Sessão — 2026-05-11
+# Sessão — 2026-05-12
 
 ## Resumo do que foi feito
 
-### 1. Correção rítmica das notas MIDI (`midi_score_view.dart`)
-- **`_drawMeasureNotes`**: posicionamento proporcional ao `startTime` dentro de cada compasso (e não espaçamento igual), corrigindo notas "fora do ritmo".
+### 1. Correção do toggle layout GP (`AlphaTabViewFactory.kt`)
+- **Problema**: o handler `toggleLayout` alterava `api.settings.display.layoutMode` e chamava `api.renderScore()`, mas o renderizador alphaTab mantém uma cópia interna das configurações. Sem `api.updateSettings()`, o `layoutMode` novo nunca era sincronizado com o renderer, e `renderScore()` usava o layout antigo (sempre Page).
+- **Conserto**: adicionado `api.updateSettings()` logo após alterar o `layoutMode` e antes de `api.renderScore()`, alinhando com o que a versão JS faz em `assets/index.html:128`.
 
-### 2. Rolagem horizontal do MIDI (`midi_score_view.dart`)
-- **`_scrollToNote`**: calcula a posição X exata da nota dentro do compasso (proporcional ao `startTime`) em vez de centralizar no compasso, funcionando nos layouts horizontal e vertical.
+### 2. Correção da reprodução MIDI (`midi_score_view.dart`)
+- **Problema**: o método `play()` iterava todas as notas sequencialmente com intervalo fixo `beatMs = 60000/bpm`, ignorando `startTime`/`endTime` reais de cada nota. Acordes (notas com mesmo `startTime`) eram tocadas uma após a outra, e a duração real das notas era desprezada — a música saía irreconhecível.
+- **Conserto**: reescrito para agrupar notas por `startTime` (formando acordes), usar a diferença real de `startTime` entre grupos como intervalo, e usar `endTime - startTime` para a duração de cada nota (note-off). O ritmo agora segue o MIDI original.
 
-### 3. Captura de impressão GP (`AlphaTabViewFactory.kt`)
-- **Engine**: definido `a.settings.core.engine = "android"` na inicialização (o padrão skia não é capturável por `view.draw(canvas)`).
-- **Captura**: força `LAYER_TYPE_SOFTWARE`, fundo branco, verifica tamanho do output (>200 bytes), fallback para `buildDrawingCache()`, restaura layer type original.
-- **Concorrência**: guard `printingInProgress` com `finally` para garantir reset.
+### 3. Melhoria do visual da partitura MIDI (`midi_score_view.dart`)
+- **Cabeças de nota por duração**: semínima = preenchida + haste, mínima = vazada + haste, semibreve = vazada sem haste, colcheia = preenchida + haste + bandeira, semicolcheia = preenchida + haste + bandeira dupla.
+- **Bandeiras realistas**: traçadas com curvas cúbicas (CubicTo) em vez de quadráticas simples.
+- **Pausas**: adicionado `_drawRest()` com suporte a pausa de semibreve (retângulo abaixo da 4ª linha), mínima (retângulo sobre a 3ª linha) e semínima (símbolo Unicode 𝄼).
+- **Rests no filtro**: `_noteMatches` já não filtra `isRest`, permitindo que pausas sejam desenhadas quando presentes nos dados.
 
 ## Estado atual
 - Análise Dart: 0 issues
-- MIDI: ritmo corrigido, rolagem horizontal corrigida, print funcional
-- GP: engine alterado para `android` Canvas, captura de print corrigida
-- Nenhum item pendente ou bloqueado
+- MIDI: reprodução corrigida (ritmo fiel ao MIDI, acordes simultâneos), visual mais profissional (cabeças por duração, bandeiras, pausas)
+- GP: engine Canvas, captura de print corrigida, toggle layout horizontal/vertical funcional
 
 ## Próximos passos (para a próxima sessão)
 - Validar a impressão GP num dispositivo físico (testar se `view.draw(canvas)` captura corretamente com engine `android`)

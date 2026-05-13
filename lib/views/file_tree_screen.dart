@@ -123,21 +123,6 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
       ),
       body: Column(
         children: [
-          if (rootPaths.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.black, width: 1.5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              margin: const EdgeInsets.all(8),
-              child: Text(
-                'Pastas: ${rootPaths.join(' | ')}',
-                style: TextStyle(fontSize: 11, color: Colors.brown[700]),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
           Expanded(
             child: TabBarView(
               controller: _tabController,

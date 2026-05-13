@@ -10,6 +10,7 @@ class MusicNote {
   final String? chordName;
   final bool isRest;
   final int channel;
+  final int velocity;
 
   MusicNote({
     required this.midi,
@@ -23,6 +24,7 @@ class MusicNote {
     this.chordName,
     this.isRest = false,
     this.channel = 0,
+    this.velocity = 100,
   });
 
   Map<String, dynamic> toJson() => {
@@ -37,6 +39,7 @@ class MusicNote {
     'chordName': chordName,
     'isRest': isRest,
     'channel': channel,
+    'velocity': velocity,
   };
 
   factory MusicNote.fromJson(Map<String, dynamic> json) => MusicNote(
@@ -51,6 +54,7 @@ class MusicNote {
     chordName: json['chordName'] as String?,
     isRest: json['isRest'] as bool? ?? false,
     channel: json['channel'] as int? ?? 0,
+    velocity: json['velocity'] as int? ?? 100,
   );
 
   String get noteName {

@@ -261,6 +261,7 @@ class AlphaTabNativeView(
                     isHorizontal = !isHorizontal
                     Log.w(TAG, "ALPHATAB: toggle layout -> ${if (isHorizontal) "Horizontal" else "Page"}")
                     api.settings.display.layoutMode = if (isHorizontal) LayoutMode.Horizontal else LayoutMode.Page
+                    api.updateSettings()
                     val score = loadedScore
                     if (score != null) {
                         api.renderScore(score, null)

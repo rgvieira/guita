@@ -13,5 +13,6 @@ class MainActivity : FlutterActivity() {
                 "alphatab_view",
                 AlphaTabViewFactory(flutterEngine.dartExecutor.binaryMessenger)
             )
+        AudioEffectsHandler(flutterEngine.dartExecutor.binaryMessenger)
     }
 }

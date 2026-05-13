@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:guitarra/services/audio_effects_service.dart';
 import 'package:guitarra/widgets/alpha_tab_view.dart';
+import 'package:guitarra/widgets/effects_sheet.dart';
 import 'package:guitarra/widgets/midi_score_view.dart';
 
 class ScoreScreen extends StatefulWidget {
@@ -16,10 +18,12 @@ class ScoreScreen extends StatefulWidget {
 class _ScoreScreenState extends State<ScoreScreen> {
   final _nativeKey = GlobalKey<AlphaTabViewState>();
   final _midiKey = GlobalKey<MidiScoreViewState>();
+  final _effectsService = AudioEffectsService();
   String _filePath = '';
   int _playerState = 0;
   bool _isHorizontal = false;
   bool _isMidiOrKar = false;
+  bool _effectsInited = false;
   String? _errorMessage;
   List<int> _channels = [];
   int _currentChannel = 0;
@@ -42,6 +46,12 @@ class _ScoreScreenState extends State<ScoreScreen> {
       final ext = _filePath.split('.').last.toLowerCase();
       _isMidiOrKar = ext == 'mid' || ext == 'midi' || ext == 'kar';
     }
+  }
+
+  @override
+  void dispose() {
+    _effectsService.release();
+    super.dispose();
   }
 
   @override
@@ -73,6 +83,12 @@ class _ScoreScreenState extends State<ScoreScreen> {
             icon: const Icon(Icons.tune),
             onPressed: () =>
                 Navigator.pushNamed(context, '/practice', arguments: _filePath),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.equalizer),
+            tooltip: 'Efeitos',
+            onPressed: _openEffects,
           ),
         ],
       ),
@@ -107,6 +123,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
         }),
         onError: (msg) => setState(() => _errorMessage = msg),
         onPlayerStateChanged: (s) => setState(() => _playerState = s),
+        effectsService: _effectsInited ? _effectsService : null,
       );
     }
     return AlphaTabView(
@@ -259,6 +276,26 @@ class _ScoreScreenState extends State<ScoreScreen> {
         setState(() => _isHorizontal = h);
       });
     }
+  }
+
+  void _openEffects() {
+    if (!_effectsInited) {
+      _effectsService.init().then((_) {
+        if (mounted) setState(() => _effectsInited = true);
+        _showEffectsSheet();
+      });
+    } else {
+      _showEffectsSheet();
+    }
+  }
+
+  void _showEffectsSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => EffectsSheet(service: _effectsService),
+    );
   }
 
   Future<void> _printScore() async {

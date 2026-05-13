@@ -13,11 +13,15 @@ class MidiPlayerService {
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
-    _sfId = await MidiPro().loadSoundfontAsset(
-      assetPath: 'assets/soundfonts/TimGM6mb.sf2',
-      bank: 0,
-      program: 0,
-    );
+    try {
+      _sfId = await MidiPro().loadSoundfontAsset(
+        assetPath: 'assets/soundfonts/TimGM6mb.sf2',
+        bank: 0,
+        program: 0,
+      );
+    } catch (_) {
+      _sfId = null;
+    }
   }
 
   Future<void> noteOn(int midi, {int velocity = 100}) async {
