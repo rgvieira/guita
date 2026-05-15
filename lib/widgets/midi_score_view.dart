@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +9,7 @@ import '../models/music_note.dart';
 import '../services/audio_effects_service.dart';
 import '../services/music_parser_service.dart';
 import '../services/midi_player_service.dart';
+import '../rendering/engraver_engine.dart';
 import 'midi_visualizer.dart';
 
 class MidiScoreView extends StatefulWidget {
@@ -105,11 +107,15 @@ class MidiScoreViewState extends State<MidiScoreView> {
       _channels = channels;
       _channelNames.clear();
       for (final ch in channels) {
-        final prog = data.channelPrograms[ch];
-        if (prog != null) {
-          _channelNames[ch] = data.instrumentName(prog);
+        if (data.channelNames.containsKey(ch) && data.channelNames[ch]!.isNotEmpty) {
+          _channelNames[ch] = data.channelNames[ch]!;
         } else {
-          _channelNames[ch] = 'Canal $ch';
+          final prog = data.channelPrograms[ch];
+          if (prog != null) {
+            _channelNames[ch] = data.instrumentName(prog);
+          } else {
+            _channelNames[ch] = 'Canal $ch';
+          }
         }
       }
       _selectedChannel = channels.isNotEmpty ? channels.first : 0;
@@ -680,15 +686,14 @@ class MidiScoreCanvas extends CustomPainter {
 
   void _drawNote(
       Canvas canvas, double x, double y, MusicNote note, int idx,
-      {bool isHighlight = false, double accidentalOffset = 0}) {
+      {bool isHighlight = false, double accidentalOffset = 0, bool drawAccidental = true, bool suppressFlag = false}) {
     const noteHeadW = 9.0;
     const noteHeadH = 6.5;
 
     final pos = _notePosition(note);
     final ny = _noteY(y, pos);
     final isHalf = note.duration >= 8 && note.duration < 16;
-    final isEighth = note.duration >= 2 && note.duration < 4;
-    final isSixteenth = note.duration == 1;
+    final isShort = note.duration <= 2;
     final isWhole = note.duration >= 16;
     final stemUp = pos > 4;
     final stemLen = lineSpacing * 3.5;
@@ -714,8 +719,8 @@ class MidiScoreCanvas extends CustomPainter {
       }
     }
 
-    // Accidental
-    if (note.step.length > 1) {
+    // Accidental (only if drawAccidental is true)
+    if (drawAccidental && note.step.length > 1) {
       final acc = note.step[1];
       if (acc == '#') {
         final tp = TextPainter(
@@ -763,11 +768,11 @@ class MidiScoreCanvas extends CustomPainter {
         Paint()..color = const Color(0xFF5D4037)..strokeWidth = 1.2,
       );
 
-      // Flag
-      if (isEighth || isSixteenth) {
+      // Flag only for non-beamed short notes
+      if (!suppressFlag && isShort) {
         final flagDir = stemUp ? 1.0 : -1.0;
         _drawFlag(canvas, stemX, stemTop, flagDir);
-        if (isSixteenth) {
+        if (note.duration <= 1) {
           _drawFlag(canvas, stemX, stemTop + lineSpacing * 1.4 * flagDir, flagDir);
         }
       }
@@ -936,37 +941,102 @@ class MidiScoreCanvas extends CustomPainter {
 
     final bpm = measure.bpm > 0 ? measure.bpm : 120.0;
     final beatMs = 60000 / bpm;
-    final measureStart = notes.first.startTime;
+    final measureStart = measure.startMs > 0 ? measure.startMs : notes.first.startTime;
     final forceSingle = groups.length == 1;
+
+    // Compute timing fractions (linear beats)
+    final timingFractions = <double>[];
+    for (int gi = 0; gi < groups.length; gi++) {
+      final gStart = groups[gi].first.startTime;
+      final beatsFromStart = (gStart - measureStart) / beatMs;
+      timingFractions.add(forceSingle ? 0.5 : (beatsFromStart / beatsPerMeasure).clamp(0.0, 1.0));
+    }
+
+    // === BEAMING DETECTION ===
+    final beamThreshold = 0.6 / beatsPerMeasure;
+    final beamedSet = <int>{};
+    {
+      int gi = 0;
+      while (gi < groups.length) {
+        if (groups[gi].first.isRest) { gi++; continue; }
+        int gj = gi + 1;
+        while (gj < groups.length && !groups[gj].first.isRest) {
+          final gap = timingFractions[gj] - timingFractions[gj - 1];
+          if (gap > beamThreshold) break;
+          gj++;
+        }
+        if (gj - gi >= 2) {
+          for (int k = gi; k < gj; k++) { beamedSet.add(k); }
+        }
+        gi = gj;
+      }
+    }
+
+    // Golden-ratio proportional spacing (EngraverEngine)
+    final positions = <double>[];
+    if (forceSingle) {
+      positions.add(mx + 4 + 0.5 * (measureWidth - 8));
+    } else {
+      final k = log(EngraverEngine.scalingFactor) / log(2);
+      double totalWeight = 0;
+      final weights = <double>[];
+      for (int gi = 0; gi < groups.length; gi++) {
+        final gStart = groups[gi].first.startTime;
+        double beatDuration;
+        if (gi < groups.length - 1) {
+          final nextStart = groups[gi + 1].first.startTime;
+          beatDuration = ((nextStart - gStart) / beatMs).clamp(0.125, beatsPerMeasure.toDouble());
+        } else {
+          final beatsFromStart = (gStart - measureStart) / beatMs;
+          beatDuration = (beatsPerMeasure - beatsFromStart).clamp(0.125, beatsPerMeasure.toDouble());
+        }
+        final w = pow(beatDuration, k).toDouble();
+        weights.add(w);
+        totalWeight += w;
+      }
+      double cum = 0;
+      for (int gi = 0; gi < groups.length; gi++) {
+        positions.add(mx + 4 + (cum / totalWeight) * (measureWidth - 8));
+        cum += weights[gi];
+      }
+    }
+
+    // Track accidentals seen in this measure
+    final accidentalsSeen = <String>{};
 
     for (int gi = 0; gi < groups.length; gi++) {
       final group = groups[gi];
-      final gStart = group.first.startTime;
-      final beatsFromStart = (gStart - measureStart) / beatMs;
-      final fraction = forceSingle
-          ? 0.5
-          : (beatsFromStart / beatsPerMeasure).clamp(0.0, 1.0);
-      final gx = mx + 4 + fraction * (measureWidth - 8);
+      final gx = positions[gi];
+      final isBeamed = beamedSet.contains(gi);
 
-      // Check if any note in chord needs accidental
       final hasAccidentals = group.any((n) => n.step.length > 1 && !n.isRest);
 
       for (final n in group) {
         if (n.isRest) {
           _drawRest(canvas, gx, sy, n.duration);
         } else {
-          // Offset accidentals for chord notes to avoid overlap
+          bool drawAcc = false;
+          if (n.step.length > 1) {
+            final accKey = '${n.step}${n.octave}';
+            if (!accidentalsSeen.contains(accKey)) {
+              drawAcc = true;
+              accidentalsSeen.add(accKey);
+            }
+          }
+
           double accOffset = 0;
           if (hasAccidentals && group.length > 1) {
-            final noteIdx = group.indexOf(n);
-            accOffset = -noteIdx * 5.0;
+            accOffset = -group.indexOf(n) * 5.0;
           }
+
           _drawNote(canvas, gx, sy, n, 0,
-              isHighlight: _isHighlighted(n), accidentalOffset: accOffset);
+              isHighlight: _isHighlighted(n),
+              accidentalOffset: accOffset,
+              drawAccidental: drawAcc,
+              suppressFlag: isBeamed);
         }
       }
 
-      // Draw measure number on first group of each measure
       if (gi == 0 && measure.number % 5 == 1) {
         final tp = TextPainter(
           text: TextSpan(
@@ -978,6 +1048,121 @@ class MidiScoreCanvas extends CustomPainter {
         tp.paint(canvas, Offset(gx, sy - 14));
       }
     }
+
+    // Draw beams on top
+    _drawBeams(canvas, groups, positions, sy, timingFractions, beamedSet);
+  }
+
+  void _drawBeams(Canvas canvas, List<List<MusicNote>> groups, List<double> positions, double sy,
+      List<double> fractions, Set<int> beamedSet) {
+    if (beamedSet.length < 2) return;
+
+    const noteHeadW = 9.0;
+    final beamPaint = Paint()
+      ..color = const Color(0xFF5D4037)
+      ..style = PaintingStyle.fill;
+
+    int i = 0;
+    while (i < groups.length) {
+      if (!beamedSet.contains(i)) { i++; continue; }
+      int j = i + 1;
+      while (j < groups.length && beamedSet.contains(j)) { j++; }
+
+      final stemUp = _groupStemUp(groups, i, j);
+      final firstBeamY = _groupBeamY(groups[i], positions[i], sy, stemUp);
+      final lastBeamY = _groupBeamY(groups[j - 1], positions[j - 1], sy, stemUp);
+      final firstX = positions[i];
+      final lastX = positions[j - 1];
+      final beamThick = lineSpacing * 0.55;
+      final beamDir = stemUp ? 1.0 : -1.0;
+
+      bool hasSixteenth = false;
+      for (int k = i; k < j - 1; k++) {
+        if ((fractions[k + 1] - fractions[k]) <= 0.5 / beatsPerMeasure) {
+          hasSixteenth = true;
+          break;
+        }
+      }
+
+      // Primary beam
+      final beamPath = Path()
+        ..moveTo(firstX - 1, firstBeamY)
+        ..lineTo(lastX + 1, lastBeamY)
+        ..lineTo(lastX + 1, lastBeamY + beamThick * beamDir)
+        ..lineTo(firstX - 1, firstBeamY + beamThick * beamDir)
+        ..close();
+      canvas.drawPath(beamPath, beamPaint);
+
+      // Redraw stems for all groups in beam
+      for (int k = i; k < j; k++) {
+        final beamY = _groupBeamY(groups[k], positions[k], sy, stemUp);
+        for (final n in groups[k]) {
+          if (n.isRest) continue;
+          final pos = _notePosition(n);
+          final ny = _noteY(sy, pos);
+          final stemX = stemUp ? positions[k] + noteHeadW / 2 : positions[k] - noteHeadW / 2;
+          final beamEdge = stemUp ? beamY : beamY + beamThick * beamDir;
+          canvas.drawLine(
+            Offset(stemX, ny),
+            Offset(stemX, beamEdge),
+            Paint()..color = const Color(0xFF5D4037)..strokeWidth = 1.5,
+          );
+        }
+      }
+
+      // Second beam for sixteenth notes
+      if (hasSixteenth) {
+        final beamGap = lineSpacing * 0.6 * beamDir;
+        final beam2Path = Path()
+          ..moveTo(firstX - 1, firstBeamY - beamGap)
+          ..lineTo(lastX + 1, lastBeamY - beamGap)
+          ..lineTo(lastX + 1, lastBeamY - beamGap + beamThick * beamDir)
+          ..lineTo(firstX - 1, firstBeamY - beamGap + beamThick * beamDir)
+          ..close();
+        canvas.drawPath(beam2Path, beamPaint);
+      }
+
+      // Edge markers
+      final edgeLen = beamThick * 1.5 * beamDir;
+      canvas.drawLine(
+        Offset(firstX, firstBeamY),
+        Offset(firstX, firstBeamY + edgeLen),
+        Paint()..color = const Color(0xFF5D4037)..strokeWidth = 1.5,
+      );
+      canvas.drawLine(
+        Offset(lastX, lastBeamY),
+        Offset(lastX, lastBeamY + edgeLen),
+        Paint()..color = const Color(0xFF5D4037)..strokeWidth = 1.5,
+      );
+
+      i = j;
+    }
+  }
+
+  bool _groupStemUp(List<List<MusicNote>> groups, int start, int end) {
+    int upCount = 0, downCount = 0;
+    for (int k = start; k < end; k++) {
+      for (final n in groups[k]) {
+        if (n.isRest) continue;
+        if (_notePosition(n) > 4) { upCount++; } else { downCount++; }
+      }
+    }
+    return upCount >= downCount;
+  }
+
+  double _groupBeamY(List<MusicNote> group, double x, double sy, bool stemUp) {
+    double ySum = 0;
+    int count = 0;
+    for (final n in group) {
+      if (n.isRest) continue;
+      final pos = _notePosition(n);
+      final ny = _noteY(sy, pos);
+      final stemLen = lineSpacing * 3.5;
+      final stemEnd = stemUp ? ny - stemLen : ny + stemLen;
+      ySum += stemEnd;
+      count++;
+    }
+    return count > 0 ? ySum / count : sy;
   }
 
   bool _isHighlighted(MusicNote note) {

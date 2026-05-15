@@ -42,3 +42,9 @@ flutter:
   assets:
     - assets/soundfonts/TimGM6mb.sf2
     - assets/soundfonts/sonivox.sf2
+    - assets/Bravura.otf
+
+  fonts:
+    - family: Bravura
+      fonts:
+        - asset: assets/Bravura.otf

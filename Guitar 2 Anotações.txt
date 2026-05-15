@@ -5,13 +5,16 @@ Key commands:
 flutter pub get
 dart run flutter_native_splash:create
 
+git add .
+git commit -m "PDF voltou a funcionar"
+git push origin main
 
 #via wifi
-adb connect 192.168.15.2:38211
+adb connect 192.168.15.2:38605
 flutter clean
 flutter pub get
 
-flutter run -d 192.168.15.2:38211
+flutter run -d 192.168.15.2:40955
 
 
 1. flutter pub get - fetch dependencies

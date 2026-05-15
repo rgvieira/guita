@@ -160,6 +160,7 @@ class MusicParserService {
     final tempoEvents = <_TempoEvent>[];
     final timeSigEvents = <_TimeSigEvent>[];
     final channelPrograms = <int, int>{};
+    final Map<int, String> trackNamesByChannel = {};
     tempoEvents.add(_TempoEvent(0, microPerQuarter));
     timeSigEvents.add(_TimeSigEvent(0, numerator, denominator));
     String title = path.split('\\').last.split('/').last.replaceAll(RegExp(r'\.(mid|midi|kar)$', caseSensitive: false), '');
@@ -177,6 +178,8 @@ class MusicParserService {
 
       int currentTick = 0;
       int runningStatus = 0;
+      String? currentTrackName;
+      final Set<int> channelsInTrack = {};
 
       while (offset < trackEnd) {
         if (offset >= bytes.length) break;
@@ -226,9 +229,12 @@ class MusicParserService {
               break;
             case 0x02: break; // Copyright
             case 0x03: // Track Name
-              if (metaLen > 0 && t == 0) {
+              if (metaLen > 0) {
                 final name = String.fromCharCodes(bytes.sublist(metaStart, metaStart + metaLen)).trim();
-                if (name.isNotEmpty) title = name;
+                if (name.isNotEmpty) {
+                  currentTrackName = name;
+                  if (t == 0 && title.isEmpty) title = name;
+                }
               }
               break;
             case 0x04: break; // Instrument
@@ -281,11 +287,13 @@ class MusicParserService {
           final note = bytes[offset++];
           final velocity = bytes[offset++];
           if (velocity > 0 && note < 128) {
+            final ch = status & 0x0F;
+            channelsInTrack.add(ch);
             allNotes.add(_RawNote(
               midi: note,
               tickStart: currentTick,
               tickEnd: -1,
-              channel: status & 0x0F,
+              channel: ch,
               velocity: velocity,
             ));
           }
@@ -327,6 +335,13 @@ class MusicParserService {
           offset = _skipSysEx(bytes, offset, trackEnd);
         } else {
           if (offset < trackEnd) offset++;
+        }
+      }
+
+      // Associate track name with channels used in this track
+      if (currentTrackName != null && currentTrackName!.isNotEmpty) {
+        for (final ch in channelsInTrack) {
+          trackNamesByChannel.putIfAbsent(ch, () => currentTrackName!);
         }
       }
 
@@ -409,9 +424,11 @@ class MusicParserService {
     final firstTempo = tempoEvents.isNotEmpty ? tempoEvents.first : _TempoEvent(0, 500000);
     final initialBpm = 60000000.0 / firstTempo.microPerQuarter;
 
-    final measures = sortedKeys.map((k) =>
-      Measure(number: k, notes: measureMap[k]!, bpm: initialBpm)
-    ).toList();
+    final measures = sortedKeys.map((k) {
+      final firstTick = (k - 1) * ticksPerQuarterNote * firstSig.numerator;
+      final startMs = computeMsAtTick(firstTick);
+      return Measure(number: k, notes: measureMap[k]!, bpm: initialBpm, startMs: startMs);
+    }).toList();
 
     return ScoreData(
       title: title,
@@ -420,6 +437,7 @@ class MusicParserService {
       beatUnit: firstSig.denominator,
       measures: measures,
       channelPrograms: channelPrograms,
+      channelNames: trackNamesByChannel,
     );
   }
 

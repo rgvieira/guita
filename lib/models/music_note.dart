@@ -77,19 +77,22 @@ class Measure {
   final int number;
   final List<MusicNote> notes;
   final double bpm;
+  final double startMs;
 
-  Measure({required this.number, required this.notes, this.bpm = 120});
+  Measure({required this.number, required this.notes, this.bpm = 120, this.startMs = 0});
 
   Map<String, dynamic> toJson() => {
     'number': number,
     'notes': notes.map((n) => n.toJson()).toList(),
     'bpm': bpm,
+    'startMs': startMs,
   };
 
   factory Measure.fromJson(Map<String, dynamic> json) => Measure(
     number: json['number'] as int,
     notes: (json['notes'] as List).map((n) => MusicNote.fromJson(n as Map<String, dynamic>)).toList(),
     bpm: (json['bpm'] as num?)?.toDouble() ?? 120,
+    startMs: (json['startMs'] as num?)?.toDouble() ?? 0,
   );
 }
 
@@ -101,6 +104,7 @@ class ScoreData {
   final int beatUnit;
   final List<Measure> measures;
   final Map<int, int> channelPrograms;
+  final Map<int, String> channelNames;
 
   ScoreData({
     this.title = 'Unknown',
@@ -110,6 +114,7 @@ class ScoreData {
     this.beatUnit = 4,
     required this.measures,
     this.channelPrograms = const {},
+    this.channelNames = const {},
   });
 
   List<MusicNote> get allNotes =>

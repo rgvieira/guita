@@ -138,7 +138,7 @@ class AlphaTabNativeView(
             val result = a.loadSoundFont(Uint8Array(bytes.toUByteArray()), false)
             Log.w(TAG, "ALPHATAB: loadSoundFont=$result")
             if (!result) {
-                channel.invokeMethod("onError", "SoundFont load returned false — using built-in synth")
+                Log.w(TAG, "SoundFont load returned false — using built-in synth (non-critical)")
             }
         } catch (e: Throwable) {
             Log.wtf(TAG, "ALPHATAB: SOUNDFONT LOAD FAILED: ${e.message}", e)
@@ -194,6 +194,7 @@ class AlphaTabNativeView(
                     isHorizontal = call.arguments as Boolean
                     Log.w(TAG, "ALPHATAB: setLayoutMode -> ${if (isHorizontal) "Horizontal" else "Page"}")
                     api.settings.display.layoutMode = if (isHorizontal) LayoutMode.Horizontal else LayoutMode.Page
+                    api.updateSettings()
                     result.success(null)
                 }
                 "loadScore" -> {
