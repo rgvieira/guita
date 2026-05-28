@@ -48,9 +48,6 @@ class FileEntry {
 
   static const supportedExtensions = [
     '.gp3', '.gp4', '.gp5', '.gpx', '.gp',
-    '.mid', '.midi', '.kar',
-    '.musicxml', '.xml',
-    '.pdf',
   ];
 
   bool get isSupported => supportedExtensions.contains(extension.toLowerCase());

@@ -1,5 +1,5 @@
-name: guitarra
-description: "Guitarra - Leitor de partituras, tablaturas e cifras com suporte a GP*, MIDI e MusicXML"
+name: guitar
+description: "Guitarra - Leitor de partituras e tablaturas com suporte a Guitar Pro"
 publish_to: "none"
 version: 1.0.0+1
 
@@ -21,7 +21,6 @@ dependencies:
   collection: ^1.19.1
   fl_chart: ^0.70.2
   permission_handler: ^11.3.1
-  flutter_midi_pro: ^3.1.6
   printing: ^5.14.2
   pdf: ^3.11.2
 
@@ -31,7 +30,7 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.3
 
-flutter_launcher_icons: # ✅ Configuração de ícone
+flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
   image_path: "assets/icon/icon.png"
@@ -41,8 +40,8 @@ flutter:
   uses-material-design: true
   assets:
     - assets/soundfonts/TimGM6mb.sf2
-    - assets/soundfonts/sonivox.sf2
     - assets/Bravura.otf
+    - assets/icon/icon.png
 
   fonts:
     - family: Bravura

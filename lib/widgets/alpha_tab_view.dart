@@ -96,19 +96,19 @@ class AlphaTabViewState extends State<AlphaTabView> {
         widget.onScoreLoaded?.call();
         break;
       case 'onTrackNames':
-        final namesStr = call.arguments as String?;
-        if (namesStr != null && namesStr.isNotEmpty) {
+        final args = call.arguments;
+        if (args is List) {
           setState(() {
-            _trackNames = namesStr.split('|');
+            _trackNames = args.map((e) => e.toString()).toList();
           });
           widget.onTrackData?.call();
         }
         break;
       case 'onTrackPrograms':
-        final programsStr = call.arguments as String?;
-        if (programsStr != null && programsStr.isNotEmpty) {
+        final args = call.arguments;
+        if (args is List) {
           setState(() {
-            _trackPrograms = programsStr.split(',').map((s) => int.tryParse(s) ?? 0).toList();
+            _trackPrograms = args.map((e) => (e is int) ? e : int.tryParse(e.toString()) ?? 0).toList();
           });
           widget.onTrackData?.call();
         }
@@ -145,6 +145,8 @@ class AlphaTabViewState extends State<AlphaTabView> {
   Future<void> nextTrack() => _channel?.invokeMethod('nextTrack') ?? Future.value();
   Future<void> prevTrack() => _channel?.invokeMethod('prevTrack') ?? Future.value();
   Future<void> setTrack(int index) => _channel?.invokeMethod('setTrack', index) ?? Future.value();
+  Future<void> setPlaybackSpeed(double speed) => _channel?.invokeMethod('setPlaybackSpeed', speed) ?? Future.value();
+  Future<void> setVolume(double volume) => _channel?.invokeMethod('setVolume', volume) ?? Future.value();
   Future<bool> toggleLayout() async {
     final result = await _channel?.invokeMethod<bool>('toggleLayout');
     return result ?? false;

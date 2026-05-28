@@ -13,8 +13,8 @@ class FileScannerService {
       try {
         await for (final entity in dir.list(recursive: true, followLinks: false)) {
           if (entity is File) {
-            final ext = entity.path.split('.').last.toLowerCase();
-            if (FileEntry.supportedExtensions.any((e) => e.contains(ext))) {
+            final ext = '.${entity.path.split('.').last.toLowerCase()}';
+            if (FileEntry.supportedExtensions.contains(ext)) {
               if (seen.contains(entity.path)) continue;
               seen.add(entity.path);
               final stat = await entity.stat();

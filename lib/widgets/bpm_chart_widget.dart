@@ -30,7 +30,7 @@ class BpmChartWidget extends StatelessWidget {
           show: true,
           horizontalInterval: 20,
           getDrawingHorizontalLine: (value) => FlLine(
-            color: Colors.brown.withValues(alpha: 0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             strokeWidth: 1,
           ),
         ),

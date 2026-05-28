@@ -25,29 +25,48 @@ class Guitar2App extends StatelessWidget {
       title: 'Guitar2',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.black,
           brightness: Brightness.light,
+          primary: Colors.black,
+          secondary: Colors.grey.shade700,
+          tertiary: Colors.grey.shade500,
+          surface: Colors.white,
         ),
-        useMaterial3: true,
-        appBarTheme: AppBarTheme(
+        appBarTheme: const AppBarTheme(
           centerTitle: true,
           elevation: 0,
           scrolledUnderElevation: 0,
           backgroundColor: Colors.transparent,
           foregroundColor: Colors.black,
           surfaceTintColor: Colors.transparent,
-          shape: const Border(
-            bottom: BorderSide(
-              color: Color(0xFF5D4037),
-              width: 2,
-            ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+          ),
+        ),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
+          backgroundColor: Colors.black,
+          foregroundColor: Colors.white,
+        ),
+        iconButtonTheme: IconButtonThemeData(
+          style: IconButton.styleFrom(
+            foregroundColor: Colors.black,
           ),
         ),
         cardTheme: CardThemeData(
           elevation: 0,
           shape: RoundedRectangleBorder(
-            side: BorderSide(color: Colors.black, width: 1.5),
+            side: BorderSide(color: Colors.grey.shade300, width: 1),
             borderRadius: BorderRadius.circular(8),
           ),
           clipBehavior: Clip.antiAlias,

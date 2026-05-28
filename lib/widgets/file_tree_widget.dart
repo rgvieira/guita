@@ -52,7 +52,7 @@ class FileTreeWidget extends ConsumerWidget {
       itemBuilder: (context, index) {
         final file = files[index];
         return ListTile(
-          leading: Icon(_iconForExt(file.extension), color: Colors.brown),
+          leading: Icon(_iconForExt(file.extension), color: Colors.black),
           title: Text(file.name, style: const TextStyle(fontSize: 14)),
           subtitle: Text(
             '${file.size ~/ 1024} KB',

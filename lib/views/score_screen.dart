@@ -1,12 +1,15 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:guitarra/services/audio_effects_service.dart';
-import 'package:guitarra/widgets/alpha_tab_view.dart';
-import 'package:guitarra/widgets/effects_sheet.dart';
-import 'package:guitarra/widgets/midi_score_view.dart';
+import 'package:guitar/services/audio_effects_service.dart';
+import 'package:guitar/widgets/alpha_tab_view.dart';
+import 'package:guitar/widgets/effects_sheet.dart';
+import 'package:guitar/widgets/waveform_visualizer.dart';
+import 'package:guitar/widgets/practice_panel.dart';
+import 'package:guitar/services/practice_service.dart';
 
 class ScoreScreen extends StatefulWidget {
   const ScoreScreen({super.key});
@@ -17,18 +20,32 @@ class ScoreScreen extends StatefulWidget {
 
 class _ScoreScreenState extends State<ScoreScreen> {
   final _nativeKey = GlobalKey<AlphaTabViewState>();
-  final _midiKey = GlobalKey<MidiScoreViewState>();
   final _effectsService = AudioEffectsService();
+  final _practiceService = PracticeService();
   String _filePath = '';
   int _playerState = 0;
   bool _isHorizontal = false;
-  bool _isMidiOrKar = false;
   bool _effectsInited = false;
   String? _errorMessage;
-  List<int> _channels = [];
-  int _currentChannel = 0;
   int _trackCount = 1;
   int _currentTrack = 0;
+  List<String> _trackNames = [];
+  bool _showPractice = false;
+  bool _isPrinting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _practiceService.onSpeedChanged = (speed) {
+      _nativeKey.currentState?.setPlaybackSpeed(speed);
+    };
+    _practiceService.onPlay = () {
+      _nativeKey.currentState?.play();
+    };
+    _practiceService.onStopPlayback = () {
+      _nativeKey.currentState?.stop();
+    };
+  }
 
   @override
   void didChangeDependencies() {
@@ -37,30 +54,38 @@ class _ScoreScreenState extends State<ScoreScreen> {
     if (args is String && args != _filePath) {
       _filePath = args;
       _errorMessage = null;
-      _channels = [];
-      _currentChannel = 0;
       _isHorizontal = false;
       _playerState = 0;
       _trackCount = 1;
       _currentTrack = 0;
-      final ext = _filePath.split('.').last.toLowerCase();
-      _isMidiOrKar = ext == 'mid' || ext == 'midi' || ext == 'kar';
+      _trackNames = [];
+      _showPractice = false;
+      _practiceService.stop();
     }
   }
 
   @override
   void dispose() {
     _effectsService.release();
+    _practiceService.stop();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final hasTracks = _trackCount > 1 || _channels.length > 1;
+    final hasTracks = _trackCount > 1;
     final isPlaying = _playerState == 1;
 
     return Scaffold(
       appBar: AppBar(
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Image.asset(
+            'assets/icon/icon.png',
+            errorBuilder: (_, __, ___) =>
+                const Icon(Icons.music_note, size: 28),
+          ),
+        ),
         title: Text(
           _filePath.split('\\').last.split('/').last,
           style: const TextStyle(fontSize: 14),
@@ -75,14 +100,14 @@ class _ScoreScreenState extends State<ScoreScreen> {
           if (_filePath.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.print),
-              tooltip: 'Imprimir / PDF',
-              onPressed: _printScore,
+              tooltip: 'Imprimir',
+              onPressed: _isPrinting ? null : _printScore,
             ),
           const SizedBox(width: 4),
           IconButton(
-            icon: const Icon(Icons.tune),
-            onPressed: () =>
-                Navigator.pushNamed(context, '/practice', arguments: _filePath),
+            icon: Icon(Icons.tune, color: _showPractice ? Colors.blue : null),
+            tooltip: 'Modo de Prática',
+            onPressed: () => setState(() => _showPractice = !_showPractice),
           ),
           const SizedBox(width: 4),
           IconButton(
@@ -92,40 +117,45 @@ class _ScoreScreenState extends State<ScoreScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Row(
         children: [
-          if (_errorMessage != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              color: Colors.red.shade100,
-              child: Text(
-                _errorMessage!,
-                style: const TextStyle(color: Colors.red, fontSize: 13),
-              ),
+          Expanded(
+            child: Column(
+              children: [
+                if (_errorMessage != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    color: Colors.red.shade50,
+                    child: Text(
+                      _errorMessage!,
+                      style: TextStyle(
+                        color: Colors.red.shade700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                Expanded(child: _buildScoreView()),
+                if (isPlaying && _isHorizontal)
+                  const SizedBox(
+                    height: 120,
+                    child: WaveformVisualizer(isPlaying: true),
+                  ),
+                _buildBottomBar(hasTracks, isPlaying),
+              ],
             ),
-          Expanded(child: _buildScoreView()),
-          _buildBottomBar(hasTracks, isPlaying),
+          ),
+          if (_showPractice)
+            PracticePanel(
+              service: _practiceService,
+              onClose: () => setState(() => _showPractice = false),
+            ),
         ],
       ),
     );
   }
 
   Widget _buildScoreView() {
-    if (_isMidiOrKar) {
-      return MidiScoreView(
-        key: _midiKey,
-        filePath: _filePath,
-        onChannelsLoaded: (channels) => setState(() {
-          _channels = channels;
-          _trackCount = channels.length;
-          if (channels.isNotEmpty) _currentChannel = channels.first;
-        }),
-        onError: (msg) => setState(() => _errorMessage = msg),
-        onPlayerStateChanged: (s) => setState(() => _playerState = s),
-        effectsService: _effectsInited ? _effectsService : null,
-      );
-    }
     return AlphaTabView(
       key: _nativeKey,
       filePath: _filePath,
@@ -142,7 +172,13 @@ class _ScoreScreenState extends State<ScoreScreen> {
           });
         }
       },
-      onTrackData: () => setState(() {}),
+      onTrackData: () => setState(() {
+        final names = _nativeKey.currentState?.trackNames;
+        if (names != null) {
+          _trackNames = names;
+          _trackCount = names.length;
+        }
+      }),
     );
   }
 
@@ -151,7 +187,7 @@ class _ScoreScreenState extends State<ScoreScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       margin: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.black, width: 1.5),
+        border: Border.all(color: Colors.grey.shade300, width: 1),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -163,20 +199,12 @@ class _ScoreScreenState extends State<ScoreScreen> {
             mini: true,
             onPressed: () {
               if (isPlaying) {
-                if (_isMidiOrKar) {
-                  _midiKey.currentState?.pause();
-                } else {
-                  _nativeKey.currentState?.pause();
-                }
+                _nativeKey.currentState?.pause();
               } else {
-                if (_isMidiOrKar) {
-                  _midiKey.currentState?.play();
-                } else {
-                  _nativeKey.currentState?.play();
-                }
+                _nativeKey.currentState?.play();
               }
             },
-            backgroundColor: isPlaying ? Colors.red : Colors.brown,
+            backgroundColor: isPlaying ? Colors.red : Colors.black,
             child: Icon(
               isPlaying ? Icons.pause : Icons.play_arrow,
               color: Colors.white,
@@ -193,43 +221,18 @@ class _ScoreScreenState extends State<ScoreScreen> {
   }
 
   Widget _buildTrackSelector() {
-    if (_isMidiOrKar) {
-      return SizedBox(
-        width: 160,
-        child: DropdownButton<int>(
-          value: _channels.contains(_currentChannel)
-              ? _currentChannel
-              : _channels.firstOrNull ?? 0,
-          isExpanded: true,
-          items: _channels.map((ch) {
-            final name = _midiKey.currentState?.channelNames[ch];
-            return DropdownMenuItem<int>(
-              value: ch,
-              child: Text(
-                name ?? 'Canal $ch',
-                style: const TextStyle(fontSize: 12),
-                overflow: TextOverflow.ellipsis,
-              ),
-            );
-          }).toList(),
-          onChanged: (ch) {
-            if (ch == null) return;
-            _midiKey.currentState?.setChannel(ch);
-            setState(() => _currentChannel = ch);
-          },
-        ),
-      );
-    }
+    final displayNames = _trackNames.isNotEmpty ? _trackNames : null;
     return SizedBox(
       width: 160,
       child: DropdownButton<int>(
         value: _currentTrack.clamp(0, _trackCount - 1),
         isExpanded: true,
         items: List.generate(_trackCount, (i) {
-          final names = _nativeKey.currentState?.trackNames;
           String label;
-          if (names != null && i < names.length && names[i].isNotEmpty) {
-            label = names[i];
+          if (displayNames != null &&
+              i < displayNames.length &&
+              displayNames[i].isNotEmpty) {
+            label = displayNames[i];
           } else {
             label = 'Faixa ${i + 1}';
           }
@@ -256,26 +259,21 @@ class _ScoreScreenState extends State<ScoreScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: Colors.brown.shade50,
+        color: Colors.grey.shade100,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: Colors.brown.shade200),
+        border: Border.all(color: Colors.grey.shade300),
       ),
       child: Text(
         '${_currentTrack + 1}/$_trackCount',
-        style: TextStyle(fontSize: 11, color: Colors.brown[700]),
+        style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
       ),
     );
   }
 
   void _toggleLayout() {
-    if (_isMidiOrKar) {
-      _midiKey.currentState?.toggleLayout();
-      setState(() => _isHorizontal = !_isHorizontal);
-    } else {
-      _nativeKey.currentState?.toggleLayout().then((h) {
-        setState(() => _isHorizontal = h);
-      });
-    }
+    _nativeKey.currentState?.toggleLayout().then((h) {
+      setState(() => _isHorizontal = h);
+    });
   }
 
   void _openEffects() {
@@ -294,44 +292,151 @@ class _ScoreScreenState extends State<ScoreScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => EffectsSheet(service: _effectsService),
+      builder: (_) => EffectsSheet(
+        service: _effectsService,
+        onVolumeChanged: (vol) {
+          _nativeKey.currentState?.setVolume(vol);
+        },
+      ),
     );
   }
 
   Future<void> _printScore() async {
     try {
-      Uint8List pdfBytes;
-      if (_isMidiOrKar) {
-        final midiState = _midiKey.currentState;
-        if (midiState == null) return;
-        pdfBytes = await midiState.printScore();
-      } else {
-        final nativeState = _nativeKey.currentState;
-        if (nativeState == null) return;
-        final pngList = await nativeState.printScore();
-        if (pngList.isEmpty) return;
-        final doc = pw.Document();
-        for (final pngBytes in pngList) {
-          final img = pw.MemoryImage(pngBytes);
-          doc.addPage(pw.Page(
-            pageFormat: PdfPageFormat.a4,
-            build: (ctx) => pw.Center(child: pw.Image(img, fit: pw.BoxFit.contain)),
-          ));
-        }
-        pdfBytes = await doc.save();
-      }
-      if (pdfBytes.isEmpty) return;
-      final baseName = _filePath.split('\\').last.split('/').last.split('.').first;
-      await Printing.sharePdf(
-        bytes: pdfBytes,
-        filename: '$baseName.pdf',
-      );
-    } catch (e) {
+      final nativeState = _nativeKey.currentState;
+      if (nativeState == null) return;
+
+      if (mounted) setState(() => _isPrinting = true);
+      final currentTrackIndex = _currentTrack;
+
+      // Mostrar feedback de que está "trabalhando"
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao imprimir: $e')),
+        unawaited(
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => const PopScope(
+              canPop: false,
+              child: Center(
+                child: Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 16),
+                        Text('Capturando páginas...'),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         );
       }
+
+      debugPrint('Iniciando captura nativa...');
+
+      // O erro do spinner "cair" sem mensagem geralmente é uma PlatformException
+      // que não está sendo tratada corretamente no fluxo assíncrono.
+      final List<dynamic> rawList = await nativeState.printScore().timeout(
+        const Duration(seconds: 60),
+      );
+
+      final pngList = rawList.cast<Uint8List>();
+
+      // Fecha o dialog apenas se ele ainda estiver lá
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+
+      if (pngList.isEmpty) {
+        throw 'O motor nativo retornou uma lista vazia.';
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Capturado: ${pngList.length} páginas. Montando PDF...',
+            ),
+          ),
+        );
+      }
+
+      final doc = pw.Document();
+      for (final pngBytes in pngList) {
+        if (pngBytes.isEmpty) continue;
+
+        final image = pw.MemoryImage(pngBytes);
+
+        // Se a largura da imagem for maior que a altura, o alphaTab capturou em modo horizontal
+        // Precisamos ajustar o PDF para Paisagem para a partitura não ficar minúscula (o "fiapo")
+        final isLandscape = (image.width ?? 0) > (image.height ?? 0);
+        final format = isLandscape
+            ? PdfPageFormat.a4.landscape
+            : PdfPageFormat.a4;
+
+        doc.addPage(
+          pw.Page(
+            pageFormat: format,
+            margin: pw.EdgeInsets.zero,
+            build: (ctx) => pw.FullPage(
+              ignoreMargins: true, // Remove margens extras do PDF
+              child: pw.Image(
+                image,
+                // BoxFit.fitWidth garante que a partitura use toda a largura do papel
+                fit: isLandscape ? pw.BoxFit.contain : pw.BoxFit.fitWidth,
+                alignment: pw.Alignment.topCenter,
+              ),
+            ),
+          ),
+        );
+      }
+
+      final fileName = _filePath.split(RegExp(r'[\\/]')).last;
+      final baseName = fileName.contains('.')
+          ? fileName.substring(0, fileName.lastIndexOf('.'))
+          : fileName;
+
+      final trackName =
+          _trackNames.isNotEmpty && currentTrackIndex < _trackNames.length
+          ? _trackNames[currentTrackIndex]
+          : 'faixa${currentTrackIndex + 1}';
+
+      final safeDocName = '${baseName}_$trackName'
+          .replaceAll(RegExp(r'[^\w\-]'), '_')
+          .replaceAll(' ', '_');
+
+      await Printing.sharePdf(
+        bytes: await doc.save(),
+        // A extensão .pdf no filename é vital para o Intent funcionar
+        filename: '$safeDocName.pdf',
+      );
+    } on TimeoutException {
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      _showErrorSnackBar(
+        'Tempo esgotado. A partitura é muito grande ou o motor travou.',
+      );
+    } catch (e) {
+      debugPrint('Erro na impressão: $e');
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      _showErrorSnackBar('Falha na captura: $e');
+    } finally {
+      if (mounted) setState(() => _isPrinting = false);
     }
+  }
+
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red.shade800),
+    );
   }
 }

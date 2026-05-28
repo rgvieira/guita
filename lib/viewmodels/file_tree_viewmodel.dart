@@ -29,10 +29,10 @@ final filteredFilesProvider = Provider<AsyncValue<List<FileEntry>>>((ref) {
       result = result.where((f) => f.isFavorite).toList();
     }
 
-    if (query.isNotEmpty) {
+    if (query.length >= 3) {
       result = result.where((f) {
         final name = f.name.toLowerCase();
-        return name.startsWith(query);
+        return name.contains(query);
       }).toList();
     }
 

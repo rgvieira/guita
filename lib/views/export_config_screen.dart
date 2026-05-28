@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import '../viewmodels/score_viewmodel.dart';
 import '../painters/score_painter.dart';
 import '../painters/tab_painter.dart';
@@ -22,62 +25,70 @@ class _ExportConfigScreenState extends ConsumerState<ExportConfigScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final filePath = ModalRoute.of(context)!.settings.arguments as String;
+    final args = ModalRoute.of(context)!.settings.arguments;
+    if (args == null) {
+      return const Scaffold(
+        body: Center(child: Text('Nenhum arquivo selecionado')),
+      );
+    }
+    final filePath = args as String;
+
     final scoreAsync = ref.watch(scoreProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Exportar'),
-      ),
+      appBar: AppBar(title: const Text('Exportar')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.black, width: 1.5),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        'Conteúdo para exportar',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black, width: 1.5),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Conteúdo para exportar',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
+                  ),
                   const SizedBox(height: 16),
                   CheckboxListTile(
                     title: const Text('Partitura'),
                     subtitle: const Text('Pentagrama com notas'),
                     value: includeScore,
                     onChanged: (v) => setState(() => includeScore = v!),
-                    activeColor: Colors.brown,
+                    activeColor: Colors.black,
                   ),
                   CheckboxListTile(
                     title: const Text('Tablatura'),
                     subtitle: const Text('Cordas e casas'),
                     value: includeTab,
                     onChanged: (v) => setState(() => includeTab = v!),
-                    activeColor: Colors.brown,
+                    activeColor: Colors.black,
                   ),
                   CheckboxListTile(
                     title: const Text('Cifras'),
                     subtitle: const Text('Nomes de acordes'),
                     value: includeChords,
                     onChanged: (v) => setState(() => includeChords = v!),
-                    activeColor: Colors.brown,
+                    activeColor: Colors.black,
                   ),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 24),
-          if (scoreAsync.hasValue)
+          if (scoreAsync.hasValue && scoreAsync.value != null)
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -109,11 +120,9 @@ class _ExportConfigScreenState extends ConsumerState<ExportConfigScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.save_alt),
-              label: const Text('Exportar PNG'),
+              label: const Text('Imprimir / Gerar PDF'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.all(16),
-                backgroundColor: Colors.brown,
-                foregroundColor: Colors.white,
               ),
             ),
           ),
@@ -138,7 +147,7 @@ class _ExportConfigScreenState extends ConsumerState<ExportConfigScreen> {
 
       final title = score.title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final outFile = File('${outputDir.path}/${title}_$timestamp.png');
+      final outFile = File('${outputDir.path}/${title}_$timestamp.pdf');
 
       final pictureRecorder = ui.PictureRecorder();
       final canvas = Canvas(pictureRecorder);
@@ -152,13 +161,13 @@ class _ExportConfigScreenState extends ConsumerState<ExportConfigScreen> {
 
       if (includeScore) {
         final sp = ScorePainter(notes: notes);
-        sp.paint(canvas, Size(width.toDouble(), 200));
+        sp.paint(canvas, Size(width, 200));
         canvas.translate(0, 200);
       }
 
       if (includeTab) {
         final tp = TabPainter(notes: notes);
-        tp.paint(canvas, Size(width.toDouble(), 130));
+        tp.paint(canvas, Size(width, 130));
       }
 
       final picture = pictureRecorder.endRecording();
@@ -167,15 +176,45 @@ class _ExportConfigScreenState extends ConsumerState<ExportConfigScreen> {
 
       if (byteData == null) throw Exception('Falha ao gerar imagem');
 
-      await outFile.writeAsBytes(byteData.buffer.asUint8List());
+      final uint8List = byteData.buffer.asUint8List();
+      final image = pw.MemoryImage(uint8List);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Exportado: ${outFile.path}'),
-            backgroundColor: Colors.green,
-          ),
-        );
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(10),
+          build: (pw.Context context) {
+            return pw.Center(child: pw.Image(image, fit: pw.BoxFit.contain));
+          },
+        ),
+      );
+
+      final pdfBytes = await pdf.save();
+
+      // Garantir nome válido
+      final fileName = title.isEmpty ? "exportacao_guitar2" : title;
+
+      final printSuccess = await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async => pdfBytes,
+        name: fileName,
+      );
+
+      if (printSuccess) {
+        // Salva cópia local apenas se abriu a impressora
+        await outFile.writeAsBytes(pdfBytes);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Documento pronto!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Impressão cancelada.')));
       }
     } catch (e) {
       if (mounted) {

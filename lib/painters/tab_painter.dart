@@ -30,14 +30,18 @@ class TabPainter extends CustomPainter {
         Offset(0, y),
         Offset(effectiveWidth, y),
         Paint()
-          ..color = Colors.brown.withValues(alpha: isThick ? 0.7 : 0.4)
+          ..color = Colors.black.withValues(alpha: isThick ? 0.8 : 0.5)
           ..strokeWidth = isThick ? 2.0 : 1.0,
       );
 
       final tp = TextPainter(
         text: TextSpan(
           text: stringNames[i],
-          style: TextStyle(fontSize: 9, color: Colors.brown[700], fontWeight: FontWeight.bold),
+          style: TextStyle(
+            fontSize: 9,
+            color: Colors.black87,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
@@ -52,7 +56,9 @@ class TabPainter extends CustomPainter {
         canvas.drawLine(
           Offset(x, startY - 4),
           Offset(x, startY + 5 * lineSpacing + 4),
-          Paint()..color = Colors.brown..strokeWidth = 1.0,
+          Paint()
+            ..color = Colors.black
+            ..strokeWidth = 1.0,
         );
       }
     }
@@ -93,14 +99,16 @@ class TabPainter extends CustomPainter {
       canvas.drawLine(
         Offset(cursorX, 0),
         Offset(cursorX, size.height),
-        Paint()..color = Colors.red..strokeWidth = 2.0,
+        Paint()
+          ..color = Colors.red
+          ..strokeWidth = 2.0,
       );
     }
   }
 
   @override
   bool shouldRepaint(covariant TabPainter oldDelegate) =>
-    oldDelegate.notes != notes ||
-    oldDelegate.cursorX != cursorX ||
-    oldDelegate.currentNoteIndex != currentNoteIndex;
+      oldDelegate.notes != notes ||
+      oldDelegate.cursorX != cursorX ||
+      oldDelegate.currentNoteIndex != currentNoteIndex;
 }

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Print</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #fff; }
+    #alphaTab { width: 100%; height: 100%; }
+  </style>
+  <script src="alphaTab.min.js"></script>
+</head>
+<body>
+<div id="alphaTab"></div>
+<script>
+  const api = new alphaTab.AlphaTabApi(document.querySelector('#alphaTab'), {
+    core: { file: null, engine: 'canvas', enableLazyLoading: false },
+    display: { staffLineWidth: 0.8, scale: 1.0, staveProfile: 'score+tablature', layout: { strategy: 'page' } },
+    player: { enablePlayer: false, enableCursor: false, enableUserInteraction: false },
+    notation: {},
+  });
+
+  let scoreData = null;
+  let totalPages = 0;
+
+  window.__renderDone = false;
+  window.__captureDone = false;
+  window.__captureResult = '[]';
+  window.__error = null;
+
+  api.scoreLoaded.on((score) => {
+    scoreData = score;
+  });
+
+  api.renderFinished.on((args) => {
+    totalPages = (args && args.totalPageCount) || 1;
+    window.__renderDone = true;
+  });
+
+  api.error.on((e) => {
+    window.__error = (e && e.message) || String(e);
+  });
+
+  function loadScoreBase64(data) {
+    window.__renderDone = false;
+    window.__error = null;
+    try {
+      const binaryStr = atob(data);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) { bytes[i] = binaryStr.charCodeAt(i); }
+      api.load(bytes.buffer);
+    } catch(e) {
+      window.__error = 'loadScoreBase64: ' + (e.message || e);
+    }
+  }
+
+  function captureAll(pageHeight) {
+    const result = [];
+    try {
+      const canvas = document.querySelector('#alphaTab canvas');
+      if (!canvas) { window.__error = 'no canvas found'; return; }
+      const w = canvas.width;
+      const fullH = canvas.height;
+      const vh = (pageHeight > 0) ? pageHeight : (window.innerHeight || 1500);
+      const pages = Math.ceil(fullH / vh);
+      for (let i = 0; i < pages; i++) {
+        const srcY = i * vh;
+        const srcH = Math.min(vh, fullH - srcY);
+        if (srcH <= 0) break;
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = w;
+        pageCanvas.height = srcH;
+        const pageCtx = pageCanvas.getContext('2d');
+        pageCtx.drawImage(canvas, 0, srcY, w, srcH, 0, 0, w, srcH);
+        result.push(pageCanvas.toDataURL('image/png'));
+      }
+    } catch(e) {
+      window.__error = 'captureAll: ' + (e.message || e);
+    }
+    window.__captureResult = JSON.stringify(result);
+    window.__captureDone = true;
+  }
+    } catch(e) {
+      window.__error = 'captureAll: ' + (e.message || e);
+    }
+    window.__captureResult = JSON.stringify(result);
+    window.__captureDone = true;
+  }
+</script>
+</body>
+</html>

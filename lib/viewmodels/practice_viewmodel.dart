@@ -1,7 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/music_note.dart';
 import '../models/practice_session.dart';
-import '../services/midi_player_service.dart';
 
 final practiceProvider = StateNotifierProvider<PracticeNotifier, PracticeState>((ref) {
   return PracticeNotifier();
@@ -58,8 +56,6 @@ class PracticeState {
 }
 
 class PracticeNotifier extends StateNotifier<PracticeState> {
-  final MidiPlayerService _player = MidiPlayerService();
-
   PracticeNotifier() : super(const PracticeState()) {
     _loadHistory();
   }
@@ -75,7 +71,7 @@ class PracticeNotifier extends StateNotifier<PracticeState> {
   void updateRepetitions(int value) => state = state.copyWith(repetitions: value);
   void toggleAccelerate() => state = state.copyWith(accelerate: !state.accelerate);
 
-  Future<void> startPractice(List<MusicNote> notes, String musicTitle) async {
+  Future<void> startPractice(String musicTitle) async {
     state = state.copyWith(isRunning: true, currentBPM: state.bpmStart, currentRepetition: 0, progress: 0);
 
     for (int rep = 0; rep < state.repetitions; rep++) {
@@ -86,13 +82,8 @@ class PracticeNotifier extends StateNotifier<PracticeState> {
         if (!state.isRunning) break;
 
         state = state.copyWith(currentBPM: currentBPM);
-        final beatDuration = (60000 ~/ currentBPM);
 
-        for (final note in notes) {
-          if (!state.isRunning) break;
-          await _player.playNote(note);
-          await Future.delayed(Duration(milliseconds: beatDuration));
-        }
+        await Future.delayed(Duration(milliseconds: (60000 ~/ currentBPM) * 4));
 
         currentBPM += state.accelerate ? state.bpmStep : -state.bpmStep;
         final totalSteps = ((state.bpmEnd - state.bpmStart) / state.bpmStep).abs() + 1;
@@ -118,7 +109,6 @@ class PracticeNotifier extends StateNotifier<PracticeState> {
   }
 
   void stop() {
-    _player.stop();
     state = state.copyWith(isRunning: false);
   }
 }

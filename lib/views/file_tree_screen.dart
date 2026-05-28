@@ -20,6 +20,7 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
   bool _initialized = false;
   late TabController _tabController;
   final _searchController = TextEditingController();
+  String? _unsupportedFileMsg;
 
   @override
   void initState() {
@@ -87,6 +88,13 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
 
     return Scaffold(
       appBar: AppBar(
+        leading: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Image.asset(
+            'assets/icon/icon.png',
+            errorBuilder: (_, __, ___) => const Icon(Icons.music_note, size: 28),
+          ),
+        ),
         title: const Text('Guitarra - Partituras'),
         bottom: TabBar(
           controller: _tabController,
@@ -110,7 +118,7 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
             },
           ),
           IconButton(
-            icon: const Icon(Icons.folder_open),
+            icon: const Icon(Icons.create_new_folder),
             tooltip: 'Adicionar pasta',
             onPressed: () => _pickFolder(context, ref),
           ),
@@ -123,6 +131,30 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
       ),
       body: Column(
         children: [
+          if (_unsupportedFileMsg != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              color: Colors.red.shade50,
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _unsupportedFileMsg!,
+                      style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => setState(() => _unsupportedFileMsg = null),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -147,7 +179,7 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
             controller: _searchController,
             decoration: InputDecoration(
               hintText: 'Buscar arquivo...',
-              prefixIcon: const Icon(Icons.search, color: Colors.brown),
+              prefixIcon: const Icon(Icons.search),
               suffixIcon: query.isNotEmpty
                   ? IconButton(
                       icon: const Icon(Icons.clear),
@@ -159,7 +191,7 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
                   : null,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: Colors.brown.shade200),
+                borderSide: BorderSide(color: Colors.grey.shade300),
               ),
               contentPadding: const EdgeInsets.symmetric(vertical: 8),
             ),
@@ -217,7 +249,7 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
                 style: TextStyle(color: Colors.grey[600])),
             const SizedBox(height: 8),
             ElevatedButton.icon(
-              icon: const Icon(Icons.add),
+              icon: const Icon(Icons.create_new_folder),
               label: const Text('Adicionar pasta'),
               onPressed: () => _pickFolder(context, ref),
             ),
@@ -271,6 +303,14 @@ class _FileTreeScreenState extends ConsumerState<FileTreeScreen>
   }
 
   void _openFile(BuildContext context, FileEntry file) {
+    final ext = file.path.split('.').last.toLowerCase();
+    if (!ext.startsWith('gp')) {
+      setState(() {
+        _unsupportedFileMsg = 'Arquivo não compatível';
+      });
+      return;
+    }
+    setState(() => _unsupportedFileMsg = null);
     Navigator.pushNamed(context, '/score', arguments: file.path);
   }
 }
@@ -322,7 +362,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
               dense: true,
               leading: Icon(
                 _expanded ? Icons.folder_open : Icons.folder,
-                color: Colors.brown,
+                color: Colors.black,
               ),
               title: Text(
                 widget.name,
@@ -456,7 +496,7 @@ class _FileTile extends ConsumerWidget {
       padding: EdgeInsets.only(left: depth * 16.0),
       child: ListTile(
         dense: true,
-        leading: Icon(_iconForExt(), color: Colors.brown),
+        leading: Icon(_iconForExt(), color: Colors.black),
         title: Text(
           name,
           style: const TextStyle(fontSize: 13),

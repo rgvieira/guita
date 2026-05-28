@@ -27,7 +27,7 @@ class ScorePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = const Color(0xFF5D4037);
+    final paint = Paint()..color = Colors.black;
     final staffTop = 30.0;
     final staffBottom = staffTop + 4 * lineSpacing;
     final effectiveWidth = size.width;
@@ -35,7 +35,11 @@ class ScorePainter extends CustomPainter {
     // Staff lines
     for (int i = 0; i < 5; i++) {
       final y = staffTop + i * lineSpacing;
-      canvas.drawLine(Offset(0, y), Offset(effectiveWidth, y), paint..strokeWidth = 0.8);
+      canvas.drawLine(
+        Offset(0, y),
+        Offset(effectiveWidth, y),
+        paint..strokeWidth = 0.8,
+      );
     }
 
     // Bar lines (every 4 "beats" visually — approximate)
@@ -43,7 +47,11 @@ class ScorePainter extends CustomPainter {
     if (notes.isNotEmpty) {
       for (int i = 0; i < notes.length; i += beatsPerBar) {
         final x = leftMargin + i * noteSpacing;
-        canvas.drawLine(Offset(x, staffTop - 5), Offset(x, staffBottom + 5), paint..strokeWidth = 1.0);
+        canvas.drawLine(
+          Offset(x, staffTop - 5),
+          Offset(x, staffBottom + 5),
+          paint..strokeWidth = 1.0,
+        );
       }
     }
 
@@ -68,14 +76,22 @@ class ScorePainter extends CustomPainter {
         for (int l = pos; l <= 0; l += 2) {
           if (l % 2 == 0) {
             final ly = _noteY(staffBottom, l);
-            canvas.drawLine(Offset(x - noteHeadW - 2, ly), Offset(x + noteHeadW + 2, ly), paint..strokeWidth = 0.8);
+            canvas.drawLine(
+              Offset(x - noteHeadW - 2, ly),
+              Offset(x + noteHeadW + 2, ly),
+              paint..strokeWidth = 0.8,
+            );
           }
         }
       } else if (pos > 8) {
         for (int l = 8; l <= pos; l += 2) {
           if (l % 2 == 0) {
             final ly = _noteY(staffBottom, l);
-            canvas.drawLine(Offset(x - noteHeadW - 2, ly), Offset(x + noteHeadW + 2, ly), paint..strokeWidth = 0.8);
+            canvas.drawLine(
+              Offset(x - noteHeadW - 2, ly),
+              Offset(x + noteHeadW + 2, ly),
+              paint..strokeWidth = 0.8,
+            );
           }
         }
       }
@@ -85,29 +101,49 @@ class ScorePainter extends CustomPainter {
         final acc = note.step[1];
         if (acc == '#') {
           final tp = TextPainter(
-            text: TextSpan(text: '♯', style: TextStyle(fontSize: 10, color: Colors.black)),
+            text: TextSpan(
+              text: '♯',
+              style: TextStyle(fontSize: 10, color: Colors.black),
+            ),
             textDirection: TextDirection.ltr,
           )..layout();
-          tp.paint(canvas, Offset(x - noteHeadW - tp.width - 3, y - tp.height / 2));
+          tp.paint(
+            canvas,
+            Offset(x - noteHeadW - tp.width - 3, y - tp.height / 2),
+          );
         } else if (acc == 'b') {
           final tp = TextPainter(
-            text: TextSpan(text: '♭', style: TextStyle(fontSize: 10, color: Colors.black)),
+            text: TextSpan(
+              text: '♭',
+              style: TextStyle(fontSize: 10, color: Colors.black),
+            ),
             textDirection: TextDirection.ltr,
           )..layout();
-          tp.paint(canvas, Offset(x - noteHeadW - tp.width - 3, y - tp.height / 2));
+          tp.paint(
+            canvas,
+            Offset(x - noteHeadW - tp.width - 3, y - tp.height / 2),
+          );
         }
       }
 
       // Note head
       if (isHighlight) {
         canvas.drawOval(
-          Rect.fromCenter(center: Offset(x, y), width: noteHeadW * 1.3, height: noteHeadH * 1.3),
+          Rect.fromCenter(
+            center: Offset(x, y),
+            width: noteHeadW * 1.3,
+            height: noteHeadH * 1.3,
+          ),
           Paint()..color = Colors.orange,
         );
       }
 
       canvas.drawOval(
-        Rect.fromCenter(center: Offset(x, y), width: noteHeadW, height: noteHeadH),
+        Rect.fromCenter(
+          center: Offset(x, y),
+          width: noteHeadW,
+          height: noteHeadH,
+        ),
         Paint()..color = Colors.black,
       );
 
@@ -115,9 +151,17 @@ class ScorePainter extends CustomPainter {
       final stemUp = pos < 4;
       final stemLen = lineSpacing * 3.5;
       if (stemUp) {
-        canvas.drawLine(Offset(x + noteHeadW / 2, y), Offset(x + noteHeadW / 2, y - stemLen), paint..strokeWidth = 1.2);
+        canvas.drawLine(
+          Offset(x + noteHeadW / 2, y),
+          Offset(x + noteHeadW / 2, y - stemLen),
+          paint..strokeWidth = 1.2,
+        );
       } else {
-        canvas.drawLine(Offset(x - noteHeadW / 2, y), Offset(x - noteHeadW / 2, y + stemLen), paint..strokeWidth = 1.2);
+        canvas.drawLine(
+          Offset(x - noteHeadW / 2, y),
+          Offset(x - noteHeadW / 2, y + stemLen),
+          paint..strokeWidth = 1.2,
+        );
       }
 
       // Flag for quarter note / beaming indicator (simple flag shape for 8th notes)
@@ -132,7 +176,12 @@ class ScorePainter extends CustomPainter {
             stemUp ? flagX + 2 : flagX - 2,
             stemUp ? flagTop + lineSpacing * 1.5 : flagTop - lineSpacing * 1.5,
           );
-        canvas.drawPath(flagPath, paint..strokeWidth = 1.5..style = PaintingStyle.fill);
+        canvas.drawPath(
+          flagPath,
+          paint
+            ..strokeWidth = 1.5
+            ..style = PaintingStyle.fill,
+        );
       }
 
       // Fret number below (small)
@@ -153,14 +202,16 @@ class ScorePainter extends CustomPainter {
       canvas.drawLine(
         Offset(cursorX, 0),
         Offset(cursorX, size.height),
-        Paint()..color = Colors.red..strokeWidth = 2.0,
+        Paint()
+          ..color = Colors.red
+          ..strokeWidth = 2.0,
       );
     }
   }
 
   @override
   bool shouldRepaint(covariant ScorePainter oldDelegate) =>
-    oldDelegate.notes != notes ||
-    oldDelegate.cursorX != cursorX ||
-    oldDelegate.currentNoteIndex != currentNoteIndex;
+      oldDelegate.notes != notes ||
+      oldDelegate.cursorX != cursorX ||
+      oldDelegate.currentNoteIndex != currentNoteIndex;
 }

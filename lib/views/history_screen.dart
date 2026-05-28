@@ -105,11 +105,11 @@ class HistoryScreen extends ConsumerWidget {
                       final session = sessions[index];
                       return ListTile(
                         leading: CircleAvatar(
-                          backgroundColor: Colors.brown.shade100,
+                          backgroundColor: Colors.grey.shade200,
                           child: Text(
                             '${session.finalBPM}',
-                            style: TextStyle(
-                              color: Colors.brown[800],
+                            style: const TextStyle(
+                              color: Colors.black87,
                               fontWeight: FontWeight.bold,
                             ),
                           ),

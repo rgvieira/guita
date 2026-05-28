@@ -84,7 +84,7 @@ class _PracticeScreenState extends ConsumerState<PracticeScreen> {
                         style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.bold,
-                          color: Colors.brown,
+                          color: Colors.black,
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -107,7 +107,7 @@ class _PracticeScreenState extends ConsumerState<PracticeScreen> {
                   label: const Text('Iniciar Prática'),
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.all(16),
-                    backgroundColor: Colors.brown,
+                    backgroundColor: Colors.black,
                     foregroundColor: Colors.white,
                   ),
                 ),
@@ -138,7 +138,7 @@ class _PracticeScreenState extends ConsumerState<PracticeScreen> {
           max: max.toDouble(),
           value: value.toDouble(),
           divisions: max - min,
-          activeColor: Colors.brown,
+          activeColor: Colors.black,
           onChanged: (v) => onChanged(v.toInt()),
         ),
       ],
@@ -157,7 +157,7 @@ class _PracticeScreenState extends ConsumerState<PracticeScreen> {
         }
         return;
       }
-      ref.read(practiceProvider.notifier).startPractice(notes, score.title);
+      ref.read(practiceProvider.notifier).startPractice(score.title);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
